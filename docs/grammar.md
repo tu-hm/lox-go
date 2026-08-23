@@ -1,0 +1,208 @@
+# The Lox grammar
+
+Canonical copy of the grammar. Every chapter from here to the end of the book
+edits this file — chapter 6 rewrites the `expression` rule into a precedence
+ladder, chapter 8 adds statements.
+
+## Chapter 5 — expressions (ambiguous)
+
+```
+expression     → literal
+               | unary
+               | binary
+               | grouping ;
+
+literal        → NUMBER | STRING | "true" | "false" | "nil" ;
+grouping       → "(" expression ")" ;
+unary          → ( "-" | "!" ) expression ;
+binary         → expression operator expression ;
+operator       → "==" | "!=" | "<" | "<=" | ">" | ">="
+               | "+"  | "-"  | "*"  | "/" ;
+```
+
+This grammar is **deliberately ambiguous**: `1 + 2 * 3` has two valid parses
+(`(+ 1 (* 2 3))` and `(* (+ 1 2) 3)`). Chapter 6 fixes that with a
+precedence-stratified rewrite. Don't fix it here.
+
+## Chapter 6 — expressions (precedence ladder)
+
+The ambiguity above is gone: each rung of the ladder binds tighter than the one
+above it, and left recursion in the binary rules is what makes them
+left-associative.
+
+```
+expression     → equality ;
+equality       → comparison ( ( "!=" | "==" ) comparison )* ;
+comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+term           → factor ( ( "-" | "+" ) factor )* ;
+factor         → unary ( ( "/" | "*" ) unary )* ;
+unary          → ( "!" | "-" ) unary | primary ;
+primary        → NUMBER | STRING | "true" | "false" | "nil"
+               | "(" expression ")" ;
+```
+
+This is what `parser/parser.go` implements, one function per rule: the `*` is a
+`for` loop, and the rule it calls is the next rung down.
+
+## The LL(k) form — what the table-driven parser reads
+
+`parser/llk` parses the same language from the same grammar written differently,
+because a predictive parser cannot use the form above. Two mechanical rewrites:
+
+**1. Left recursion out.** `a ( op a )*` hides left recursion — the loop is an
+`a` that starts with an `a`. An LL parser expands the leftmost symbol, so it
+would recurse forever. Consume one operand, then loop in a tail rule:
+
+```
+term           → factor termTail ;
+termTail       → "-" factor termTail
+               | "+" factor termTail
+               | ε ;
+```
+
+**2. Alternation out.** Prediction picks a whole production, not a branch inside
+one, so `( "-" | "+" )` becomes one production per operator — the same
+desugaring as challenge 1 below, needed for real this time.
+
+The full grammar, with the statement rules that only exist so FOLLOW sets are
+computed against a whole program:
+
+```
+program        → statements ;
+statements     → exprStatement statements | ε ;
+exprStatement  → expression ";" ;
+
+expression     → equality ;
+equality       → comparison equalityTail ;
+equalityTail   → "!=" comparison equalityTail
+               | "==" comparison equalityTail
+               | ε ;
+comparison     → term comparisonTail ;
+comparisonTail → ">" term comparisonTail | ">=" term comparisonTail
+               | "<" term comparisonTail | "<=" term comparisonTail
+               | ε ;
+term           → factor termTail ;
+termTail       → "-" factor termTail | "+" factor termTail | ε ;
+factor         → unary factorTail ;
+factorTail     → "/" unary factorTail | "*" unary factorTail | ε ;
+unary          → "!" unary | "-" unary | primary ;
+primary        → NUMBER | STRING | "true" | "false" | "nil"
+               | "(" expression ")" ;
+```
+
+The tail rewrite loses the associativity that left recursion gave for free.
+`parser/llk` gets it back by placing the tree-building action *inside* the
+production, before the recursive tail — see
+[docs/llk-parser.md § 3](llk-parser.md#3-semantic-actions-and-where-they-sit).
+
+This grammar is LL(1), so `llk.DefaultK` is 1; `-k=2` and `-k=3` parse it too,
+since every LL(1) grammar is LL(k) for larger k.
+
+## Notation
+
+- `→` separates a rule head from its body; `;` ends the rule.
+- **Terminals** are quoted (`"("`) or CAPITALISED (`NUMBER`). These are
+  `token.TokenType` values.
+- **Nonterminals** are lowercase. These become AST node types.
+- `|` alternation · `( )` grouping · `*` zero-or-more · `+` one-or-more ·
+  `?` optional.
+
+## Rule → node mapping
+
+| Grammar rule | AST node | Fields |
+|---|---|---|
+| `binary` | `Binary` | `Left Expr`, `Operator token.Token`, `Right Expr` |
+| `grouping` | `Grouping` | `Expression Expr` |
+| `literal` | `Literal` | `Value any` |
+| `unary` | `Unary` | `Operator token.Token`, `Right Expr` |
+
+`operator` gets no node — the token already carries which operator it is. That
+is the "abstract" in abstract syntax tree: only what the interpreter needs
+survives.
+
+---
+
+## Challenge 1 — the metasyntax is only sugar
+
+`*`, `+`, `?`, `|` and `( )` add no power. Every one of them desugars into extra
+rules and recursion. Removing them from the chapter 5 grammar: each alternative
+becomes its own production, and the parenthesised operator choice becomes a
+named nonterminal.
+
+```
+expression     → literal ;
+expression     → unary ;
+expression     → binary ;
+expression     → grouping ;
+
+literal        → NUMBER ;
+literal        → STRING ;
+literal        → "true" ;
+literal        → "false" ;
+literal        → "nil" ;
+
+grouping       → "(" expression ")" ;
+
+unary          → unary_op expression ;
+unary_op       → "-" ;
+unary_op       → "!" ;
+
+binary         → expression operator expression ;
+
+operator       → "==" ;   operator → "!=" ;
+operator       → "<"  ;   operator → "<=" ;
+operator       → ">"  ;   operator → ">=" ;
+operator       → "+"  ;   operator → "-"  ;
+operator       → "*"  ;   operator → "/"  ;
+```
+
+The interesting half is repetition, which this grammar has none of. The
+chapter's challenge grammar does:
+
+```
+expr → expr ( "(" ( expr ( "," expr )* )? ")" | "." IDENTIFIER )+
+     | IDENTIFIER
+     | NUMBER
+```
+
+Desugared — `+` becomes left recursion, `*` becomes left recursion, `?` becomes
+an empty alternative:
+
+```
+expr     → expr calls ;
+expr     → IDENTIFIER ;
+expr     → NUMBER ;
+
+calls    → call ;              // the "+": one...
+calls    → calls call ;        // ...or more
+
+call     → "(" arguments ")" ;
+call     → "." IDENTIFIER ;
+
+arguments →  ;                 // the "?": empty
+arguments → arglist ;
+
+arglist  → expr ;              // the "*": one...
+arglist  → arglist "," expr ;  // ...or more, comma separated
+```
+
+**The lesson:** repetition *is* recursion, and the sugar exists so the grammar
+stays readable — not so it can say anything new. Worth knowing because chapter 6
+hand-writes a recursive-descent parser, where `*` in the grammar becomes a
+`for` loop and recursion in the grammar becomes recursion in the code.
+
+## Challenge 2 — the complement to Visitor
+
+Visitor makes **adding operations** cheap and adding types expensive. The
+functional mirror — bundle every operation on one *type* together — makes
+adding types cheap and adding operations expensive. Go can express both, and
+the repo shows both sides: the visitor interface in `ast/expr.go` is the OO
+half, and a type switch over `Expr` (plan §4, Option B) is the functional half.
+The write-up of that trade is [plan §4](05-representing-code.md#4-design-decision-how-to-represent-the-ast-in-go);
+this repo took Option A for the compile-time exhaustiveness check.
+
+## Challenge 3 — RPN printer
+
+Done: `ast/rpn.go`, tested in `ast/rpn_test.go`. A second operation over the
+same tree with zero changes to any node type — the argument for the pattern,
+in about forty lines.
