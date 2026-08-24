@@ -134,20 +134,26 @@ func (e *GrammarError) Error() string { return "llk: " + e.Message }
 // ------------------------------------------------------------- the grammar --
 
 const (
-	nProgram        = "program"
-	nDeclarations   = "declarations"
-	nDeclaration    = "declaration"
-	nStatement      = "statement"
-	nVarDeclaration = "varDeclaration"
-	nVarInitializer = "varInitializer"
-	nPrintStatement = "printStatement"
-	nExprStatement  = "exprStatement"
-	nBlock          = "block"
-	nExpression     = "expression"
-	nAssignment     = "assignment"
-	nAssignmentTail = "assignmentTail"
-	nOr             = "or"
-	nAnd            = "and"
+	nProgram         = "program"
+	nDeclarations    = "declarations"
+	nDeclaration     = "declaration"
+	nStatement       = "statement"
+	nVarDeclaration  = "varDeclaration"
+	nVarInitializer  = "varInitializer"
+	nPrintStatement  = "printStatement"
+	nReturnStatement = "returnStatement"
+	nReturnValue     = "returnValue"
+	nExprStatement   = "exprStatement"
+	nBlock           = "block"
+	nExpression      = "expression"
+	nAssignment      = "assignment"
+	nAssignmentTail  = "assignmentTail"
+	nOr              = "or"
+	nAnd             = "and"
+	nCall            = "call"
+	nCallTail        = "callTail"
+	nArguments       = "arguments"
+	nArgumentsTail   = "argumentsTail"
 )
 
 const (
@@ -156,9 +162,10 @@ const (
 	expectStmt = "Expect a statement."
 )
 
-// loxGrammar is the core program grammar and chapter 9 precedence ladder in LL
-// form. Recoverable blocks and compound control statements are orchestrated in
-// parser.go; their leaf statements and all expressions still run here. Two
+// loxGrammar is the core program grammar and chapter 10 precedence ladder in LL
+// form. Recoverable blocks, compound control statements, and function
+// declarations are orchestrated in parser.go; their leaf statements and all
+// expressions still run here. Two
 // rewrites turn the recursive-descent expression grammar into this one:
 //
 //	term → term ( "-" | "+" ) factor        left recursion — an LL parser
@@ -185,6 +192,7 @@ func loxGrammar() *grammar {
 
 	g.add(nStatement, nt(nExprStatement))
 	g.add(nStatement, nt(nPrintStatement))
+	g.add(nStatement, nt(nReturnStatement))
 	g.add(nStatement, nt(nBlock))
 
 	g.add(nVarDeclaration,
@@ -207,6 +215,14 @@ func loxGrammar() *grammar {
 		term(token.SEMICOLON, "Expect ';' after value."),
 		act(mkPrintStatement),
 	)
+	g.add(nReturnStatement,
+		term(token.RETURN, ""),
+		nt(nReturnValue),
+		term(token.SEMICOLON, "Expect ';' after return value."),
+		act(mkReturnStatement),
+	)
+	g.add(nReturnValue, nt(nExpression), act(mkReturnValue))
+	g.add(nReturnValue, act(noReturnValue)) // ε
 
 	g.add(nExprStatement,
 		nt(nExpression),
@@ -239,11 +255,32 @@ func loxGrammar() *grammar {
 	level(g, "term", "factor", token.MINUS, token.PLUS)
 	level(g, "factor", "unary", token.SLASH, token.STAR)
 
-	// unary → ( "!" | "-" ) unary | primary. Right-recursive, so !!nil nests
+	// unary → ( "!" | "-" ) unary | call. Right-recursive, so !!nil nests
 	// the way the source reads and no tail rule is needed.
 	g.add("unary", term(token.BANG, ""), nt("unary"), act(mkUnary))
 	g.add("unary", term(token.MINUS, ""), nt("unary"), act(mkUnary))
-	g.add("unary", nt("primary"))
+	g.add("unary", nt(nCall))
+
+	// Calls are postfix operators and bind more tightly than unary operators.
+	// Folding before recurring keeps factory()(1) associated from the left.
+	g.add(nCall, nt("primary"), nt(nCallTail))
+	g.add(nCallTail,
+		term(token.LEFT_PAREN, ""),
+		nt(nArguments),
+		term(token.RIGHT_PAREN, "Expect ')' after arguments."),
+		act(mkCall),
+		nt(nCallTail),
+	)
+	g.add(nCallTail) // ε
+	g.add(nArguments, nt(nExpression), act(startArguments), nt(nArgumentsTail))
+	g.add(nArguments, act(emptyArguments)) // ε
+	g.add(nArgumentsTail,
+		term(token.COMMA, ""),
+		nt(nExpression),
+		act(appendArgument),
+		nt(nArgumentsTail),
+	)
+	g.add(nArgumentsTail) // ε
 
 	g.add("primary", term(token.FALSE, ""), act(mkConst(false)))
 	g.add("primary", term(token.TRUE, ""), act(mkConst(true)))
@@ -258,9 +295,10 @@ func loxGrammar() *grammar {
 		act(mkGrouping),
 	)
 
-	for _, name := range []string{nExpression, nAssignment, nOr, nAnd, "equality", "comparison", "term", "factor", "unary", "primary"} {
+	for _, name := range []string{nExpression, nAssignment, nOr, nAnd, "equality", "comparison", "term", "factor", "unary", nCall, "primary"} {
 		g.fail[name] = expectExpr
 	}
+	g.fail[nCallTail] = expectEnd
 	g.fail[nProgram] = expectStmt
 	g.fail[nDeclarations] = expectStmt
 	g.fail[nDeclaration] = expectStmt
@@ -269,6 +307,7 @@ func loxGrammar() *grammar {
 	g.entry(nProgram, expectStmt)
 	g.entry(nVarDeclaration, expectStmt)
 	g.entry(nPrintStatement, expectStmt)
+	g.entry(nReturnStatement, expectStmt)
 	g.entry(nExprStatement, expectExpr)
 	g.entry(nExpression, expectExpr)
 
@@ -358,6 +397,11 @@ func (s *stack) statements() []ast.Stmt {
 	return statements
 }
 
+func (s *stack) arguments() []ast.Expr {
+	arguments, _ := s.pop().([]ast.Expr)
+	return arguments
+}
+
 func (s *stack) reset() { s.vals = s.vals[:0] }
 
 // discard drops a token that carries no meaning past the parse — ';' and the
@@ -387,6 +431,37 @@ func mkUnary(s *stack) error {
 	right := s.expr()
 	op := s.token()
 	s.push(&ast.Unary{Operator: op, Right: right})
+	return nil
+}
+
+func emptyArguments(s *stack) error {
+	s.push([]ast.Expr{})
+	return nil
+}
+
+func startArguments(s *stack) error {
+	s.push([]ast.Expr{s.expr()})
+	return nil
+}
+
+func appendArgument(s *stack) error {
+	argument := s.expr()
+	comma := s.token()
+	arguments := s.arguments()
+	if len(arguments) >= 255 {
+		errors.ErrorToken(comma, "Can't have more than 255 arguments.")
+	}
+	arguments = append(arguments, argument)
+	s.push(arguments)
+	return nil
+}
+
+func mkCall(s *stack) error {
+	paren := s.token()
+	arguments := s.arguments()
+	s.token() // '('
+	callee := s.expr()
+	s.push(&ast.Call{Callee: callee, Paren: paren, Arguments: arguments})
 	return nil
 }
 
@@ -461,6 +536,26 @@ func mkPrintStatement(s *stack) error {
 	expr := s.expr()
 	s.token() // 'print'
 	s.push(&ast.Print{Expression: expr})
+	return nil
+}
+
+type returnValue struct{ expression ast.Expr }
+
+func mkReturnValue(s *stack) error {
+	s.push(returnValue{expression: s.expr()})
+	return nil
+}
+
+func noReturnValue(s *stack) error {
+	s.push(returnValue{})
+	return nil
+}
+
+func mkReturnStatement(s *stack) error {
+	s.token() // ';'
+	value, _ := s.pop().(returnValue)
+	keyword := s.token()
+	s.push(&ast.Return{Keyword: keyword, Value: value.expression})
 	return nil
 }
 

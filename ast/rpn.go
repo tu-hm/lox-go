@@ -1,6 +1,7 @@
 package ast
 
 import (
+	"strconv"
 	"strings"
 
 	"compiler101/lexer/token"
@@ -30,6 +31,13 @@ func (p *RPNPrinter) VisitBinaryExpr(e *Binary) any {
 
 func (p *RPNPrinter) VisitAssignExpr(e *Assign) any {
 	return p.Print(e.Value) + " " + e.Name.Lexeme + " ="
+}
+
+func (p *RPNPrinter) VisitCallExpr(e *Call) any {
+	exprs := make([]Expr, 0, len(e.Arguments)+1)
+	exprs = append(exprs, e.Callee)
+	exprs = append(exprs, e.Arguments...)
+	return p.join(exprs...) + " call/" + strconv.Itoa(len(e.Arguments))
 }
 
 // VisitGroupingExpr drops the parentheses. That is the whole point of RPN: the

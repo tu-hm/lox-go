@@ -370,3 +370,150 @@ func TestForDesugaringExecutionAndInitializerScope(t *testing.T) {
 		t.Fatalf("loop initializer leaked out of its scope: %v", err)
 	}
 }
+
+func TestNativeClockAndCallableErrors(t *testing.T) {
+	value, err := interpreter.New().Interpret(parseExpr(t, "clock()"))
+	if err != nil {
+		t.Fatalf("clock(): %v", err)
+	}
+	seconds, ok := value.(float64)
+	if !ok || seconds <= 0 {
+		t.Errorf("clock() = %T %v, want a positive number", value, value)
+	}
+
+	tests := []struct {
+		source  string
+		message string
+	}{
+		{`"not callable"();`, "Can only call functions and classes."},
+		{`fun one(a) {} one();`, "Expected 1 arguments but got 0."},
+		{`clock(1);`, "Expected 0 arguments but got 1."},
+	}
+	for _, test := range tests {
+		err := interpreter.NewWithWriter(&bytes.Buffer{}).Execute(parseProgram(t, test.source))
+		var runtimeErr *loxerrors.RuntimeError
+		if !stderrors.As(err, &runtimeErr) {
+			t.Errorf("Execute(%q) error = %T %v, want *errors.RuntimeError", test.source, err, err)
+			continue
+		}
+		if runtimeErr.Message != test.message || runtimeErr.Token.Type != token.RIGHT_PAREN {
+			t.Errorf("Execute(%q) error = %#v, want %q at ')'", test.source, runtimeErr, test.message)
+		}
+	}
+}
+
+func TestUserFunctionsRecursionAndReturns(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		fun add(a, b) { return a + b; }
+		print add;
+		print add(2, 3);
+
+		fun procedure() { print "body"; }
+		print procedure();
+
+		fun findThree(n) {
+			while (n < 10) {
+				if (n == 3) return n;
+				n = n + 1;
+			}
+			return;
+		}
+		print findThree(1);
+
+		fun fib(n) {
+			if (n <= 1) return n;
+			return fib(n - 2) + fib(n - 1);
+		}
+		print fib(8);
+	`)
+
+	if err := interp.Execute(program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got, want := out.String(), "<fn add>\n5\nbody\nnil\n3\n21\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func TestArgumentsEvaluateLeftToRight(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		var trace = "";
+		fun mark(value) {
+			trace = trace + value;
+			return value;
+		}
+		fun pair(a, b) { return a + b; }
+		print pair(mark("a"), mark("b"));
+		print trace;
+	`)
+
+	if err := interp.Execute(program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got, want := out.String(), "ab\nab\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func TestClosuresCaptureAndRetainDeclarationEnvironment(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		fun makeCounter() {
+			var i = 0;
+			fun count() {
+				i = i + 1;
+				return i;
+			}
+			return count;
+		}
+
+		var first = makeCounter();
+		var second = makeCounter();
+		print first();
+		print first();
+		print second();
+	`)
+
+	if err := interp.Execute(program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got, want := out.String(), "1\n2\n1\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func TestParserFrontEndsExecuteFunctionsEqually(t *testing.T) {
+	const source = `
+		fun makeAdder(a) {
+			fun add(b) { return a + b; }
+			return add;
+		}
+		var addTwo = makeAdder(2);
+		print addTwo(40);
+	`
+
+	var outputs []string
+	for _, kind := range []parser.Kind{parser.RecursiveDescent, parser.LLK} {
+		frontEnd, err := parser.NewOf(parser.Config{Kind: kind}, lexer.Lex(source))
+		if err != nil {
+			t.Fatalf("NewOf(%s): %v", kind, err)
+		}
+		program, errs := frontEnd.ParseProgram()
+		if len(errs) != 0 {
+			t.Fatalf("%s ParseProgram: %v", kind, errs)
+		}
+		var out bytes.Buffer
+		if err := interpreter.NewWithWriter(&out).Execute(program); err != nil {
+			t.Fatalf("%s Execute: %v", kind, err)
+		}
+		outputs = append(outputs, out.String())
+	}
+	if outputs[0] != "42\n" || outputs[1] != outputs[0] {
+		t.Errorf("recursive descent = %q, LL(k) = %q, want 42", outputs[0], outputs[1])
+	}
+}

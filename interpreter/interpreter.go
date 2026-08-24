@@ -12,6 +12,7 @@ import (
 )
 
 type Interpreter struct {
+	globals     *Environment
 	environment *Environment
 	out         io.Writer
 }
@@ -35,7 +36,9 @@ func NewWithWriter(out io.Writer) *Interpreter {
 	if out == nil {
 		out = io.Discard
 	}
-	return &Interpreter{environment: NewEnvironment(nil), out: out}
+	globals := NewEnvironment(nil)
+	globals.Define("clock", nativeClock{})
+	return &Interpreter{globals: globals, environment: globals, out: out}
 }
 
 func (i *Interpreter) Interpret(e ast.Expr) (value any, err error) {
@@ -88,6 +91,23 @@ func (i *Interpreter) VisitAssignExpr(e *ast.Assign) any {
 		i.failWith(err)
 	}
 	return value
+}
+
+func (i *Interpreter) VisitCallExpr(e *ast.Call) any {
+	callee := i.evaluate(e.Callee)
+	arguments := make([]any, 0, len(e.Arguments))
+	for _, argument := range e.Arguments {
+		arguments = append(arguments, i.evaluate(argument))
+	}
+
+	callable, ok := callee.(Callable)
+	if !ok {
+		i.fail(e.Paren, "Can only call functions and classes.")
+	}
+	if len(arguments) != callable.Arity() {
+		i.fail(e.Paren, fmt.Sprintf("Expected %d arguments but got %d.", callable.Arity(), len(arguments)))
+	}
+	return callable.Call(i, arguments)
 }
 
 func (i *Interpreter) VisitLiteralExpr(e *ast.Literal) any {
@@ -232,6 +252,12 @@ func (i *Interpreter) VisitExpressionStmt(stmt *ast.Expression) any {
 	return nil
 }
 
+func (i *Interpreter) VisitFunctionStmt(stmt *ast.Function) any {
+	function := newLoxFunction(stmt, i.environment)
+	i.environment.Define(stmt.Name.Lexeme, function)
+	return nil
+}
+
 func (i *Interpreter) VisitIfStmt(stmt *ast.If) any {
 	if truthy(i.evaluate(stmt.Condition)) {
 		i.execute(stmt.ThenBranch)
@@ -245,6 +271,14 @@ func (i *Interpreter) VisitPrintStmt(stmt *ast.Print) any {
 	value := i.evaluate(stmt.Expression)
 	fmt.Fprintln(i.out, ast.Stringify(value))
 	return nil
+}
+
+func (i *Interpreter) VisitReturnStmt(stmt *ast.Return) any {
+	var value any
+	if stmt.Value != nil {
+		value = i.evaluate(stmt.Value)
+	}
+	panic(returnSignal{value: value})
 }
 
 func (i *Interpreter) VisitVarStmt(stmt *ast.Var) any {

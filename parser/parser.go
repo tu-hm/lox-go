@@ -75,10 +75,52 @@ func (p *Parser) declarationRecovering() ast.Stmt {
 }
 
 func (p *Parser) declaration() (ast.Stmt, error) {
+	if p.match(token.FUN) {
+		return p.function("function")
+	}
 	if p.match(token.VAR) {
 		return p.varDeclaration()
 	}
 	return p.statement()
+}
+
+func (p *Parser) function(kind string) (ast.Stmt, error) {
+	name, err := p.consume(token.IDENTIFIER, "Expect "+kind+" name.")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.consume(token.LEFT_PAREN, "Expect '(' after "+kind+" name."); err != nil {
+		return nil, err
+	}
+
+	var params []token.Token
+	if !p.check(token.RIGHT_PAREN) {
+		for {
+			if len(params) >= 255 {
+				errors.ErrorToken(p.peek(), "Can't have more than 255 parameters.")
+			}
+			param, err := p.consume(token.IDENTIFIER, "Expect parameter name.")
+			if err != nil {
+				return nil, err
+			}
+			params = append(params, param)
+			if !p.match(token.COMMA) {
+				break
+			}
+		}
+	}
+
+	if _, err := p.consume(token.RIGHT_PAREN, "Expect ')' after parameters."); err != nil {
+		return nil, err
+	}
+	if _, err := p.consume(token.LEFT_BRACE, "Expect '{' before "+kind+" body."); err != nil {
+		return nil, err
+	}
+	body, err := p.block()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.Function{Name: name, Params: params, Body: body}, nil
 }
 
 func (p *Parser) varDeclaration() (ast.Stmt, error) {
@@ -110,6 +152,9 @@ func (p *Parser) statement() (ast.Stmt, error) {
 	}
 	if p.match(token.PRINT) {
 		return p.printStatement()
+	}
+	if p.match(token.RETURN) {
+		return p.returnStatement()
 	}
 	if p.match(token.WHILE) {
 		return p.whileStatement()
@@ -241,6 +286,22 @@ func (p *Parser) printStatement() (ast.Stmt, error) {
 		return nil, err
 	}
 	return &ast.Print{Expression: value}, nil
+}
+
+func (p *Parser) returnStatement() (ast.Stmt, error) {
+	keyword := p.previous()
+	var value ast.Expr
+	var err error
+	if !p.check(token.SEMICOLON) {
+		value, err = p.expression()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if _, err := p.consume(token.SEMICOLON, "Expect ';' after return value."); err != nil {
+		return nil, err
+	}
+	return &ast.Return{Keyword: keyword, Value: value}, nil
 }
 
 func (p *Parser) expressionStmt() (ast.Stmt, error) {
@@ -469,7 +530,47 @@ func (p *Parser) unary() (ast.Expr, error) {
 			Right:    right,
 		}, nil
 	}
-	return p.primary()
+	return p.call()
+}
+
+func (p *Parser) call() (ast.Expr, error) {
+	expr, err := p.primary()
+	if err != nil {
+		return nil, err
+	}
+
+	for p.match(token.LEFT_PAREN) {
+		expr, err = p.finishCall(expr)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return expr, nil
+}
+
+func (p *Parser) finishCall(callee ast.Expr) (ast.Expr, error) {
+	var arguments []ast.Expr
+	if !p.check(token.RIGHT_PAREN) {
+		for {
+			if len(arguments) >= 255 {
+				errors.ErrorToken(p.peek(), "Can't have more than 255 arguments.")
+			}
+			argument, err := p.expression()
+			if err != nil {
+				return nil, err
+			}
+			arguments = append(arguments, argument)
+			if !p.match(token.COMMA) {
+				break
+			}
+		}
+	}
+
+	paren, err := p.consume(token.RIGHT_PAREN, "Expect ')' after arguments.")
+	if err != nil {
+		return nil, err
+	}
+	return &ast.Call{Callee: callee, Paren: paren, Arguments: arguments}, nil
 }
 
 func (p *Parser) primary() (ast.Expr, error) {

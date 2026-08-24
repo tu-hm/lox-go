@@ -103,6 +103,14 @@ func TestPrinter(t *testing.T) {
 			"(or false true)",
 		},
 		{
+			"function call",
+			&ast.Call{
+				Callee:    &ast.Variable{Name: op(token.IDENTIFIER, "sum")},
+				Arguments: []ast.Expr{num(1), num(2)},
+			},
+			"(call sum 1 2)",
+		},
+		{
 			"comparison",
 			binary(num(1), token.LESS_EQUAL, "<=", num(2)),
 			"(<= 1 2)",

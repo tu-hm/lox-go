@@ -22,6 +22,19 @@ func TestRunSourceReusesInterpreterAcrossReplLines(t *testing.T) {
 	}
 }
 
+func TestRunSourceReusesFunctionsAcrossReplLines(t *testing.T) {
+	defer errors.Reset()
+
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	runSource(`fun twice(value) { return value * 2; }`, options{}, interp, true)
+	runSource(`print twice(21);`, options{}, interp, true)
+
+	if got, want := out.String(), "42\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
 func TestBareExpressionDetectionIsReplOnlySyntaxChoice(t *testing.T) {
 	for source, want := range map[string]bool{
 		"1 + 2":            true,
@@ -33,6 +46,8 @@ func TestBareExpressionDetectionIsReplOnlySyntaxChoice(t *testing.T) {
 		"if (true) {}":     false,
 		"while (false) {}": false,
 		"for (;;) {}":      false,
+		"fun f() {}":       false,
+		"return 1":         false,
 	} {
 		if got := isBareExpression(lexer.Lex(source)); got != want {
 			t.Errorf("isBareExpression(%q) = %t, want %t", source, got, want)

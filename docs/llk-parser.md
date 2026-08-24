@@ -164,6 +164,18 @@ masked after the closing `)` or `;`; otherwise a condition run could see tokens
 from the following statement, a continuation outside its table entry. The
 delimiter remains visible, while anything beyond it is normalized to EOF.
 
+Chapter 10 keeps that division. Postfix calls and return statements are
+ordinary LL(1) productions, so the table parses them. The call tail folds
+before recurring, making `factory()(1)` a call whose callee is `factory()`.
+Argument-list actions accumulate expressions from left to right and report the
+book's 255-argument limit without abandoning an otherwise valid parse.
+
+Function declarations are orchestrated in `parser.go`. Their braced bodies can
+contain nested functions, recoverable declarations, `if`, `while`, and `for`,
+so delegating the body to the existing recursive block boundary preserves all
+of those behaviors. Parameter parsing is kept beside that boundary and applies
+the same 255-item limit as recursive descent.
+
 ## 5. The table, and the check you get for free
 
 `newTable` walks the predict set of every production and files it under
@@ -226,8 +238,9 @@ describes a parse that is not going to happen. `TestSynchronizeClearsTheStacks`
 checks the next statement really does start clean.
 
 `ParseProgram` restarts the driver per declaration rather than running one parse
-over the whole program. Blocks recursively do the same for their contents, and
-chapter 9 control statements recursively call the same statement dispatcher.
+over the whole program. Blocks recursively do the same for their contents;
+chapter 9 control statements and chapter 10 function declarations recursively
+call the same declaration and statement dispatchers.
 Recovery is much easier to reason about when the driver stack is empty at each
 declaration boundary. The chapter 7 `ParseAll` expression entry point remains
 for compatibility and uses the same reset rule.

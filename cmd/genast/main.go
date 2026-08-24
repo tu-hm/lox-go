@@ -70,6 +70,15 @@ var exprs = hierarchy{
 			},
 		},
 		{
+			Name: "Call",
+			Doc:  "Call invokes Callee with Arguments. Paren locates call-site runtime errors.",
+			Fields: []field{
+				{"Callee", "Expr"},
+				{"Paren", "token.Token"},
+				{"Arguments", "[]Expr"},
+			},
+		},
+		{
 			Name:   "Grouping",
 			Doc:    "Grouping is a parenthesised expression. It survives into the tree because\nit changes precedence, and the interpreter must not re-associate across it.",
 			Fields: []field{{"Expression", "Expr"}},
@@ -119,6 +128,15 @@ var stmts = hierarchy{
 			Fields: []field{{"Expression", "Expr"}},
 		},
 		{
+			Name: "Function",
+			Doc:  "Function binds Name to a callable with Params and Body.",
+			Fields: []field{
+				{"Name", "token.Token"},
+				{"Params", "[]token.Token"},
+				{"Body", "[]Stmt"},
+			},
+		},
+		{
 			Name: "If",
 			Doc:  "If executes ThenBranch when Condition is truthy, otherwise ElseBranch when present.",
 			Fields: []field{
@@ -131,6 +149,14 @@ var stmts = hierarchy{
 			Name:   "Print",
 			Doc:    "Print evaluates Expression and writes its Lox representation.",
 			Fields: []field{{"Expression", "Expr"}},
+		},
+		{
+			Name: "Return",
+			Doc:  "Return exits the nearest function, yielding Value or nil when it is absent.",
+			Fields: []field{
+				{"Keyword", "token.Token"},
+				{"Value", "Expr"},
+			},
 		},
 		{
 			Name: "Var",

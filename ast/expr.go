@@ -17,6 +17,7 @@ type Expr interface {
 type ExprVisitor interface {
 	VisitAssignExpr(e *Assign) any
 	VisitBinaryExpr(e *Binary) any
+	VisitCallExpr(e *Call) any
 	VisitGroupingExpr(e *Grouping) any
 	VisitLiteralExpr(e *Literal) any
 	VisitLogicalExpr(e *Logical) any
@@ -42,6 +43,16 @@ type Binary struct {
 
 func (e *Binary) Accept(v ExprVisitor) any { return v.VisitBinaryExpr(e) }
 func (e *Binary) isExpr()                  {}
+
+// Call invokes Callee with Arguments. Paren locates call-site runtime errors.
+type Call struct {
+	Callee    Expr
+	Paren     token.Token
+	Arguments []Expr
+}
+
+func (e *Call) Accept(v ExprVisitor) any { return v.VisitCallExpr(e) }
+func (e *Call) isExpr()                  {}
 
 // Grouping is a parenthesised expression. It survives into the tree because
 // it changes precedence, and the interpreter must not re-associate across it.

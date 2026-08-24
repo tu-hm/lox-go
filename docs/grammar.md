@@ -2,7 +2,8 @@
 
 Canonical copy of the grammar. Every chapter from here to the end of the book
 edits this file — chapter 6 rewrites the `expression` rule into a precedence
-ladder, chapter 8 adds statements, and chapter 9 adds control flow.
+ladder, chapter 8 adds statements, chapter 9 adds control flow, and chapter 10
+adds calls and user-defined functions.
 
 ## Chapter 5 — expressions (ambiguous)
 
@@ -114,6 +115,50 @@ The three optional `for` clauses become an optional outer initializer block, a
 `While` whose missing condition defaults to `true`, and an optional increment
 expression appended to the loop body.
 
+## Chapter 10 — functions
+
+Chapter 10 adds postfix calls, native and user-defined functions, parameters,
+returns, and closures. A call's callee is any sufficiently high-precedence
+expression, which is why repeated call suffixes support `factory()(argument)`.
+
+```
+program        → declaration* EOF ;
+declaration    → funDecl | varDecl | statement ;
+funDecl        → "fun" function ;
+function       → IDENTIFIER "(" parameters? ")" block ;
+parameters     → IDENTIFIER ( "," IDENTIFIER )* ;
+statement      → exprStmt | forStmt | ifStmt | printStmt
+               | returnStmt | whileStmt | block ;
+block          → "{" declaration* "}" ;
+varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
+ifStmt         → "if" "(" expression ")" statement
+                 ( "else" statement )? ;
+whileStmt      → "while" "(" expression ")" statement ;
+forStmt        → "for" "(" ( varDecl | exprStmt | ";" )
+                 expression? ";" expression? ")" statement ;
+printStmt      → "print" expression ";" ;
+returnStmt     → "return" expression? ";" ;
+exprStmt       → expression ";" ;
+
+expression     → assignment ;
+assignment     → IDENTIFIER "=" assignment | logic_or ;
+logic_or       → logic_and ( "or" logic_and )* ;
+logic_and      → equality ( "and" equality )* ;
+equality       → comparison ( ( "!=" | "==" ) comparison )* ;
+comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+term           → factor ( ( "-" | "+" ) factor )* ;
+factor         → unary ( ( "/" | "*" ) unary )* ;
+unary          → ( "!" | "-" ) unary | call ;
+call           → primary ( "(" arguments? ")" )* ;
+arguments      → expression ( "," expression )* ;
+primary        → NUMBER | STRING | "true" | "false" | "nil"
+               | "(" expression ")" | IDENTIFIER ;
+```
+
+Both parameter and argument lists are limited to 255 entries for compatibility
+with the bytecode interpreter built later in the book. A missing return value,
+or reaching the end of a function body, produces `nil`.
+
 ## The LL(k) form — what the table-driven parser reads
 
 `parser/llk` parses the same language from the same grammar written differently,
@@ -198,6 +243,21 @@ binds `else` to the nearest `if` without weakening the table's conflict checks.
 Nested expression runs mask lookahead after their closing `)` or `;`, so the
 same logic works for every supported `k`.
 
+Chapter 10 inserts a factored postfix-call level below `unary`:
+
+```
+unary          → "!" unary | "-" unary | call ;
+call           → primary callTail ;
+callTail       → "(" arguments ")" {mkCall} callTail | ε ;
+arguments      → expression {startArguments} argumentsTail | ε ;
+argumentsTail  → "," expression {appendArgument} argumentsTail | ε ;
+```
+
+`mkCall` runs before the recursive tail, so `factory()(1)` folds from the left.
+Return statements remain table-driven leaf statements. Function declarations
+stay in the orchestration layer because their bodies may contain recoverable
+declarations and compound statements that intentionally sit outside the table.
+
 ## Notation
 
 - `→` separates a rule head from its body; `;` ends the rule.
@@ -213,6 +273,7 @@ same logic works for every supported `k`.
 |---|---|---|
 | assignment | `Assign` | `Name token.Token`, `Value Expr` |
 | `binary` | `Binary` | `Left Expr`, `Operator token.Token`, `Right Expr` |
+| call | `Call` | `Callee Expr`, `Paren token.Token`, `Arguments []Expr` |
 | `grouping` | `Grouping` | `Expression Expr` |
 | `literal` | `Literal` | `Value any` |
 | logical operator | `Logical` | `Left Expr`, `Operator token.Token`, `Right Expr` |
@@ -220,8 +281,10 @@ same logic works for every supported `k`.
 | variable access | `Variable` | `Name token.Token` |
 | block | `Block` | `Statements []Stmt` |
 | expression statement | `Expression` | `Expression Expr` |
+| function declaration | `Function` | `Name token.Token`, `Params []token.Token`, `Body []Stmt` |
 | if statement | `If` | `Condition Expr`, `ThenBranch Stmt`, `ElseBranch Stmt` |
 | print statement | `Print` | `Expression Expr` |
+| return statement | `Return` | `Keyword token.Token`, `Value Expr` |
 | variable declaration | `Var` | `Name token.Token`, `Initializer Expr` |
 | while statement | `While` | `Condition Expr`, `Body Stmt` |
 

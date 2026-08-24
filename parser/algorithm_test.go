@@ -19,8 +19,10 @@ var sources = []string{
 	"1 < 2 == true", "2 >= 1 != false", "1 < 2 <= 3 > 4 >= 5",
 	`"a" + "b" == "ab"`, "((((42))))", "(1 + 2) * (3 - 4) / (5 + 6)",
 	"false or true and false", "true or false or nil", "true and false == false",
+	"clock()", "sum(1, 2 * 3)", "factory()(1)", "-clock()",
 	// and the failures
 	"", "*", ")", "(", "(1 + 2", "1 +", "1 + 2)", "1 2", "+;", "1 + * 2",
+	"f(", "f(1,)", "f(1 2)",
 }
 
 func printOf(e ast.Expr) string {
@@ -131,6 +133,9 @@ func TestAlgorithmsAgreeOnPrograms(t *testing.T) {
 		`for (var i = 0; i < 3; i = i + 1) print i;`,
 		`for (;;) print 1;`,
 		`for (i = 0; i < 2;) print i;`,
+		`fun add(a, b) { return a + b; } print add(1, 2);`,
+		`fun outer(a) { fun inner(b) { return a + b; } return inner; }`,
+		`return; return 1;`,
 	}
 
 	for _, src := range programs {

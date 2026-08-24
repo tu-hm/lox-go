@@ -157,10 +157,58 @@ func (p *Parser) declarationRecovering() ast.Stmt {
 }
 
 func (p *Parser) declaration() (ast.Stmt, error) {
+	if p.check(token.FUN) {
+		p.advance()
+		return p.function("function")
+	}
 	if p.check(token.VAR) {
 		return p.runStatement(nVarDeclaration)
 	}
 	return p.statement()
+}
+
+func (p *Parser) function(kind string) (ast.Stmt, error) {
+	name, err := p.consume(token.IDENTIFIER, "Expect "+kind+" name.")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.consume(token.LEFT_PAREN, "Expect '(' after "+kind+" name."); err != nil {
+		return nil, err
+	}
+
+	var params []token.Token
+	if !p.check(token.RIGHT_PAREN) {
+		for {
+			if len(params) >= 255 {
+				errors.ErrorToken(p.peek(), "Can't have more than 255 parameters.")
+			}
+			param, err := p.consume(token.IDENTIFIER, "Expect parameter name.")
+			if err != nil {
+				return nil, err
+			}
+			params = append(params, param)
+			if !p.check(token.COMMA) {
+				break
+			}
+			p.advance()
+		}
+	}
+
+	if _, err := p.consume(token.RIGHT_PAREN, "Expect ')' after parameters."); err != nil {
+		return nil, err
+	}
+	if !p.check(token.LEFT_BRACE) {
+		return nil, errors.ParseErrorAt(p.peek(), "Expect '{' before "+kind+" body.")
+	}
+	body, err := p.block()
+	if err != nil {
+		return nil, err
+	}
+	block, ok := body.(*ast.Block)
+	if !ok {
+		return nil, fmt.Errorf("llk: internal error: function body produced %T, want *ast.Block", body)
+	}
+	return &ast.Function{Name: name, Params: params, Body: block.Statements}, nil
 }
 
 func (p *Parser) statement() (ast.Stmt, error) {
@@ -173,6 +221,8 @@ func (p *Parser) statement() (ast.Stmt, error) {
 		return p.ifStatement()
 	case p.check(token.PRINT):
 		return p.runStatement(nPrintStatement)
+	case p.check(token.RETURN):
+		return p.runStatement(nReturnStatement)
 	case p.check(token.WHILE):
 		p.advance()
 		return p.whileStatement()

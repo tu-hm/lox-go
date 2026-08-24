@@ -47,6 +47,14 @@ func TestRPNPrinter(t *testing.T) {
 			"false true or",
 		},
 		{
+			"function call records arity",
+			&ast.Call{
+				Callee:    &ast.Variable{Name: op(token.IDENTIFIER, "sum")},
+				Arguments: []ast.Expr{num(1), num(2)},
+			},
+			"sum 1 2 call/2",
+		},
+		{
 			"grouping leaves no trace",
 			group(binary(num(1), token.PLUS, "+", num(2))),
 			"1 2 +",

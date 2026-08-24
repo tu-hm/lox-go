@@ -8,6 +8,7 @@
 package llk
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -657,6 +658,70 @@ func TestControlFlowForEveryK(t *testing.T) {
 			if len(got) != 1 || got[0] != tt.want {
 				t.Errorf("k=%d ParseProgram(%q) = %v, want [%s]", k, tt.source, got, tt.want)
 			}
+		}
+	}
+}
+
+func TestFunctionsCallsAndReturnsForEveryK(t *testing.T) {
+	defer errors.Reset()
+
+	for k := MinK; k <= MaxK; k++ {
+		for source, want := range map[string]string{
+			"clock()":          "(call clock)",
+			"sum(1, 2)":        "(call sum 1 2)",
+			"-factory()(1, 2)": "(- (call (call factory) 1 2))",
+		} {
+			expr, err := parserFor(t, source, k).Parse()
+			if err != nil {
+				t.Fatalf("k=%d Parse(%q): %v", k, source, err)
+			}
+			if got := (&ast.Printer{}).Print(expr); got != want {
+				t.Errorf("k=%d Parse(%q) = %s, want %s", k, source, got, want)
+			}
+		}
+
+		statements, errs := parserFor(t, `
+			fun add(a, b) {
+				if (a == 0) return;
+				return a + b;
+			}
+		`, k).ParseProgram()
+		if len(errs) != 0 {
+			t.Fatalf("k=%d ParseProgram: %v", k, errs)
+		}
+		want := "(fun add (a b) (block (if (== a 0) (return)) (return (+ a b))))"
+		if got := renderProgram(statements); len(got) != 1 || got[0] != want {
+			t.Errorf("k=%d ParseProgram = %v, want [%s]", k, got, want)
+		}
+	}
+}
+
+func TestFunctionParameterAndArgumentLimitsForEveryK(t *testing.T) {
+	defer errors.Reset()
+
+	params := make([]string, 256)
+	arguments := make([]string, 256)
+	for index := range params {
+		params[index] = fmt.Sprintf("p%d", index)
+		arguments[index] = "nil"
+	}
+
+	for k := MinK; k <= MaxK; k++ {
+		parserFor(t, "fun tooMany("+strings.Join(params, ",")+") {}", k).ParseProgram()
+		if !errors.HadError {
+			t.Errorf("k=%d: 256 parameters did not report an error", k)
+		}
+
+		errors.Reset()
+		p, err := NewK(lexer.Lex("tooMany("+strings.Join(arguments, ",")+")"), k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.Parse(); err != nil {
+			t.Fatalf("k=%d too-many-argument syntax should remain parseable: %v", k, err)
+		}
+		if !errors.HadError {
+			t.Errorf("k=%d: 256 arguments did not report an error", k)
 		}
 	}
 }

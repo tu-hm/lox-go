@@ -17,8 +17,10 @@ type Stmt interface {
 type StmtVisitor interface {
 	VisitBlockStmt(e *Block) any
 	VisitExpressionStmt(e *Expression) any
+	VisitFunctionStmt(e *Function) any
 	VisitIfStmt(e *If) any
 	VisitPrintStmt(e *Print) any
+	VisitReturnStmt(e *Return) any
 	VisitVarStmt(e *Var) any
 	VisitWhileStmt(e *While) any
 }
@@ -39,6 +41,16 @@ type Expression struct {
 func (e *Expression) Accept(v StmtVisitor) any { return v.VisitExpressionStmt(e) }
 func (e *Expression) isStmt()                  {}
 
+// Function binds Name to a callable with Params and Body.
+type Function struct {
+	Name   token.Token
+	Params []token.Token
+	Body   []Stmt
+}
+
+func (e *Function) Accept(v StmtVisitor) any { return v.VisitFunctionStmt(e) }
+func (e *Function) isStmt()                  {}
+
 // If executes ThenBranch when Condition is truthy, otherwise ElseBranch when present.
 type If struct {
 	Condition  Expr
@@ -56,6 +68,15 @@ type Print struct {
 
 func (e *Print) Accept(v StmtVisitor) any { return v.VisitPrintStmt(e) }
 func (e *Print) isStmt()                  {}
+
+// Return exits the nearest function, yielding Value or nil when it is absent.
+type Return struct {
+	Keyword token.Token
+	Value   Expr
+}
+
+func (e *Return) Accept(v StmtVisitor) any { return v.VisitReturnStmt(e) }
+func (e *Return) isStmt()                  {}
 
 // Var declares Name, initialized by Initializer or nil when it is absent.
 type Var struct {

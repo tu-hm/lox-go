@@ -6,6 +6,8 @@
 package parser
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"compiler101/ast"
@@ -404,5 +406,84 @@ func TestControlFlowParseErrors(t *testing.T) {
 		if len(errs) == 0 {
 			t.Errorf("ParseProgram(%q) returned no error", source)
 		}
+	}
+}
+
+func TestParseFunctionsCallsAndReturns(t *testing.T) {
+	defer errors.Reset()
+
+	for source, want := range map[string]string{
+		"clock()":          "(call clock)",
+		"sum(1, 2)":        "(call sum 1 2)",
+		"-factory()(1, 2)": "(- (call (call factory) 1 2))",
+	} {
+		expr, err := parserFor(t, source).Parse()
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", source, err)
+		}
+		if got := (&ast.Printer{}).Print(expr); got != want {
+			t.Errorf("Parse(%q) = %s, want %s", source, got, want)
+		}
+	}
+
+	statements, errs := parserFor(t, `
+		fun add(a, b) {
+			if (a == 0) return;
+			return a + b;
+		}
+	`).ParseProgram()
+	if len(errs) != 0 {
+		t.Fatalf("ParseProgram: %v", errs)
+	}
+	want := "(fun add (a b) (block (if (== a 0) (return)) (return (+ a b))))"
+	if got := renderStatements(statements); len(got) != 1 || got[0] != want {
+		t.Errorf("ParseProgram = %v, want [%s]", got, want)
+	}
+}
+
+func TestFunctionParseErrors(t *testing.T) {
+	defer errors.Reset()
+
+	for source, want := range map[string]string{
+		"fun () {}":       "Expect function name.",
+		"fun f {}":        "Expect '(' after function name.",
+		"fun f(a,) {}":    "Expect parameter name.",
+		"fun f(a {}":      "Expect ')' after parameters.",
+		"fun f() return;": "Expect '{' before function body.",
+		"return 1":        "Expect ';' after return value.",
+	} {
+		_, errs := parserFor(t, source).ParseProgram()
+		if len(errs) == 0 {
+			t.Errorf("ParseProgram(%q) returned no error", source)
+			continue
+		}
+		if parseErr, ok := errs[0].(*ParseError); !ok || parseErr.Message != want {
+			t.Errorf("ParseProgram(%q) error = %v, want %q", source, errs[0], want)
+		}
+	}
+}
+
+func TestFunctionParameterAndArgumentLimits(t *testing.T) {
+	defer errors.Reset()
+
+	params := make([]string, 256)
+	arguments := make([]string, 256)
+	for index := range params {
+		params[index] = fmt.Sprintf("p%d", index)
+		arguments[index] = "nil"
+	}
+
+	parserFor(t, "fun tooMany("+strings.Join(params, ",")+") {}").ParseProgram()
+	if !errors.HadError {
+		t.Error("256 parameters did not report an error")
+	}
+
+	errors.Reset()
+	p := New(lexer.Lex("tooMany(" + strings.Join(arguments, ",") + ")"))
+	if _, err := p.Parse(); err != nil {
+		t.Fatalf("too-many-argument syntax should remain parseable: %v", err)
+	}
+	if !errors.HadError {
+		t.Error("256 arguments did not report an error")
 	}
 }

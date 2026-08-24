@@ -47,6 +47,15 @@ func (p *StmtPrinter) VisitExpressionStmt(stmt *Expression) any {
 	return "(expr " + p.expressions.Print(stmt.Expression) + ")"
 }
 
+func (p *StmtPrinter) VisitFunctionStmt(stmt *Function) any {
+	params := make([]string, len(stmt.Params))
+	for index, param := range stmt.Params {
+		params[index] = param.Lexeme
+	}
+	body := p.VisitBlockStmt(&Block{Statements: stmt.Body}).(string)
+	return "(fun " + stmt.Name.Lexeme + " (" + strings.Join(params, " ") + ") " + body + ")"
+}
+
 func (p *StmtPrinter) VisitIfStmt(stmt *If) any {
 	printed := "(if " + p.expressions.Print(stmt.Condition) + " " + p.Print(stmt.ThenBranch)
 	if stmt.ElseBranch != nil {
@@ -57,6 +66,13 @@ func (p *StmtPrinter) VisitIfStmt(stmt *If) any {
 
 func (p *StmtPrinter) VisitPrintStmt(stmt *Print) any {
 	return "(print " + p.expressions.Print(stmt.Expression) + ")"
+}
+
+func (p *StmtPrinter) VisitReturnStmt(stmt *Return) any {
+	if stmt.Value == nil {
+		return "(return)"
+	}
+	return "(return " + p.expressions.Print(stmt.Value) + ")"
 }
 
 func (p *StmtPrinter) VisitVarStmt(stmt *Var) any {

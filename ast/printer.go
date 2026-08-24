@@ -29,6 +29,13 @@ func (p *Printer) VisitAssignExpr(e *Assign) any {
 	return "(= " + e.Name.Lexeme + " " + p.Print(e.Value) + ")"
 }
 
+func (p *Printer) VisitCallExpr(e *Call) any {
+	exprs := make([]Expr, 0, len(e.Arguments)+1)
+	exprs = append(exprs, e.Callee)
+	exprs = append(exprs, e.Arguments...)
+	return p.parenthesize("call", exprs...)
+}
+
 func (p *Printer) VisitGroupingExpr(e *Grouping) any {
 	return p.parenthesize("group", e.Expression)
 }

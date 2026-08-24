@@ -1,0 +1,34 @@
+print clock;
+
+fun fib(n) {
+  if (n <= 1) return n;
+  return fib(n - 2) + fib(n - 1);
+}
+
+for (var i = 0; i < 8; i = i + 1) {
+  print fib(i);
+}
+
+fun makeCounter() {
+  var value = 0;
+
+  fun count() {
+    value = value + 1;
+    return value;
+  }
+
+  return count;
+}
+
+var counter = makeCounter();
+print counter();
+print counter();
+
+fun makeAdder(left) {
+  fun add(right) {
+    return left + right;
+  }
+  return add;
+}
+
+print makeAdder(20)(22);
