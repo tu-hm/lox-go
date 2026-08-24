@@ -55,7 +55,7 @@ func TestFirstSet(t *testing.T) {
 
 	want := []token.TokenType{
 		token.NUMBER, token.STRING, token.TRUE, token.FALSE, token.NIL,
-		token.LEFT_PAREN, token.MINUS, token.BANG,
+		token.IDENTIFIER, token.LEFT_PAREN, token.MINUS, token.BANG,
 	}
 	for _, tt := range want {
 		if !s.first[nExpression].has(seq{tt}) {
@@ -525,5 +525,77 @@ func TestNewAppendsEOF(t *testing.T) {
 	}
 	if got := (&ast.Printer{}).Print(expr); got != "1" {
 		t.Errorf("got %s, want 1", got)
+	}
+}
+
+// ------------------------------------------------------------ parseProgram --
+
+func renderProgram(statements []ast.Stmt) []string {
+	printer := ast.NewStmtPrinter(&ast.Printer{})
+	out := make([]string, len(statements))
+	for i, statement := range statements {
+		out[i] = printer.Print(statement)
+	}
+	return out
+}
+
+func TestParseProgram(t *testing.T) {
+	defer errors.Reset()
+
+	const source = `var a = 1; print a; a = a + 1; { var a; print a; }`
+	want := []string{
+		"(var a 1)",
+		"(print a)",
+		"(expr (= a (+ a 1)))",
+		"(block (var a) (print a))",
+	}
+
+	for k := MinK; k <= MaxK; k++ {
+		statements, errs := parserFor(t, source, k).ParseProgram()
+		if len(errs) != 0 {
+			t.Fatalf("k=%d: unexpected errors: %v", k, errs)
+		}
+		got := renderProgram(statements)
+		if len(got) != len(want) {
+			t.Fatalf("k=%d: got %v, want %v", k, got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("k=%d statement %d = %s, want %s", k, i, got[i], want[i])
+			}
+		}
+	}
+}
+
+func TestWholeProgramGrammarBuildsStatementList(t *testing.T) {
+	defer errors.Reset()
+
+	p := parserFor(t, `var a = 1; { print a; }`, DefaultK)
+	value, err := p.run(nProgram)
+	if err != nil {
+		t.Fatalf("run(program): %v", err)
+	}
+	statements, ok := value.([]ast.Stmt)
+	if !ok {
+		t.Fatalf("program produced %T, want []ast.Stmt", value)
+	}
+	if got, want := renderProgram(statements), []string{"(var a 1)", "(block (print a))"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("program = %v, want %v", got, want)
+	}
+}
+
+func TestParseProgramInvalidAssignmentTarget(t *testing.T) {
+	defer errors.Reset()
+
+	statements, errs := parserFor(t, "a + b = 3; print 4;", DefaultK).ParseProgram()
+	if len(errs) != 1 {
+		t.Fatalf("got %d errors, want 1: %v", len(errs), errs)
+	}
+	pe, ok := errs[0].(*errors.ParseError)
+	if !ok || pe.Token.Type != token.EQUAL || pe.Message != "Invalid assignment target." {
+		t.Errorf("error = %v, want invalid target at '='", errs[0])
+	}
+	if got := renderProgram(statements); len(got) != 1 || got[0] != "(print 4)" {
+		t.Errorf("recovered as %v, want [(print 4)]", got)
 	}
 }

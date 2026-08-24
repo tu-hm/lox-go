@@ -25,6 +25,12 @@ type options struct {
 }
 
 func Run(source string, opt options) {
+	runSource(source, opt, interpreter.New(), false)
+}
+
+// runSource is shared by scripts and the REPL. A caller-owned interpreter is
+// what lets bindings survive from one REPL line to the next.
+func runSource(source string, opt options, interp *interpreter.Interpreter, repl bool) {
 	tokens := lexer.Lex(source)
 
 	if opt.tokens {
@@ -33,6 +39,9 @@ func Run(source string, opt options) {
 		}
 		return
 	}
+	if errors.HadError {
+		return // scanner already reported the malformed source
+	}
 
 	p, err := parser.NewOf(opt.parser, tokens)
 	if err != nil {
@@ -40,32 +49,27 @@ func Run(source string, opt options) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(64) // EX_USAGE
 	}
-	interp := interpreter.New()
 
-	// A ';' means the source is a batch of statements, so parse it as one and
-	// report every error it contains. Without one it is a single expression —
-	// the REPL case, where demanding a terminator would be noise.
-	if containsSemicolon(tokens) {
-		exprs, _ := p.ParseAll()
-		for _, expr := range exprs {
-			emit(interp, expr, opt.show)
-			if errors.HadRuntimeError {
-				break
-			}
+	// Preserve the expression-friendly REPL from the chapter challenge. Scripts
+	// always parse as programs; a REPL line without statement syntax may omit
+	// its semicolon and prints the resulting value automatically.
+	if repl && isBareExpression(tokens) {
+		expr, err := p.Parse()
+		if err != nil {
+			return // already reported through pkg/errors
 		}
+		emitExpression(interp, expr, opt.show)
 		return
 	}
 
-	expr, err := p.Parse()
-	if err != nil {
-		return // already reported through pkg/errors
+	statements, parseErrors := p.ParseProgram()
+	if len(parseErrors) != 0 || errors.HadError {
+		return
 	}
-	emit(interp, expr, opt.show)
+	emitProgram(interp, statements, opt.show)
 }
 
-// emit prints one parsed expression using the requested view. Evaluation is
-// the default; AST and RPN output remain available for debugging the parser.
-func emit(interp *interpreter.Interpreter, expr ast.Expr, show string) {
+func emitExpression(interp *interpreter.Interpreter, expr ast.Expr, show string) {
 	switch show {
 	case "ast":
 		fmt.Println((&ast.Printer{}).Print(expr))
@@ -73,22 +77,55 @@ func emit(interp *interpreter.Interpreter, expr ast.Expr, show string) {
 		fmt.Println((&ast.RPNPrinter{}).Print(expr))
 	default:
 		value, err := interp.Interpret(expr)
-		var rte *errors.RuntimeError
-		if goerrors.As(err, &rte) {
-			errors.ReportRuntimeError(rte)
+		if reportRuntimeError(err) {
 			return
 		}
 		fmt.Println(ast.Stringify(value))
 	}
 }
 
-func containsSemicolon(tokens []token.Token) bool {
-	for _, t := range tokens {
-		if t.Type == token.SEMICOLON {
-			return true
-		}
+func emitProgram(interp *interpreter.Interpreter, statements []ast.Stmt, show string) {
+	var expressions ast.ExprFormatter
+	switch show {
+	case "ast":
+		expressions = &ast.Printer{}
+	case "rpn":
+		expressions = &ast.RPNPrinter{}
+	default:
+		reportRuntimeError(interp.Execute(statements))
+		return
+	}
+
+	printed := ast.NewStmtPrinter(expressions).PrintProgram(statements)
+	if printed != "" {
+		fmt.Println(printed)
+	}
+}
+
+func reportRuntimeError(err error) bool {
+	var rte *errors.RuntimeError
+	if goerrors.As(err, &rte) {
+		errors.ReportRuntimeError(rte)
+		return true
 	}
 	return false
+}
+
+func isBareExpression(tokens []token.Token) bool {
+	for _, t := range tokens {
+		if t.Type == token.SEMICOLON {
+			return false
+		}
+	}
+	if len(tokens) == 0 {
+		return true
+	}
+	switch tokens[0].Type {
+	case token.PRINT, token.VAR, token.LEFT_BRACE:
+		return false
+	default:
+		return true
+	}
 }
 
 func RunFile(path string, opt options) {
@@ -111,6 +148,7 @@ func RunFile(path string, opt options) {
 // RunPrompt is the interpreter REPL.
 func RunPrompt(opt options) {
 	reader := bufio.NewReader(os.Stdin)
+	interp := interpreter.New()
 	for {
 		fmt.Print("> ")
 
@@ -120,7 +158,7 @@ func RunPrompt(opt options) {
 			return
 		}
 
-		Run(text, opt)
+		runSource(text, opt, interp, true)
 
 		errors.Reset()
 	}

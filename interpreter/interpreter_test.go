@@ -1,6 +1,7 @@
 package interpreter_test
 
 import (
+	"bytes"
 	stderrors "errors"
 	"testing"
 
@@ -19,6 +20,15 @@ func parseExpr(t *testing.T, source string) ast.Expr {
 		t.Fatalf("parse(%q): %v", source, err)
 	}
 	return expr
+}
+
+func parseProgram(t *testing.T, source string) []ast.Stmt {
+	t.Helper()
+	statements, errs := parser.New(lexer.Lex(source)).ParseProgram()
+	if len(errs) != 0 {
+		t.Fatalf("parse program: %v", errs)
+	}
+	return statements
 }
 
 // eval drives the complete user-facing expression pipeline.
@@ -196,4 +206,90 @@ func TestInterpretDoesNotLaunderUnexpectedPanics(t *testing.T) {
 
 	// A malformed tree is a programming error, not a Lox runtime error.
 	_, _ = interpreter.New().Interpret(&ast.Grouping{})
+}
+
+func TestExecuteStatementsVariablesAndScope(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		var a = "global";
+		var unset;
+		print unset;
+		{
+			var a = "local";
+			print a;
+			a = a + "!";
+			print a;
+		}
+		print a;
+	`)
+
+	if err := interp.Execute(program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got, want := out.String(), "nil\nlocal\nlocal!\nglobal\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func TestAssignmentReturnsValueAndAssociatesRight(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		var a;
+		var b;
+		print a = b = 3;
+		print a;
+		print b;
+	`)
+
+	if err := interp.Execute(program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got, want := out.String(), "3\n3\n3\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func TestUndefinedVariableErrors(t *testing.T) {
+	for _, source := range []string{"print missing;", "missing = 1;"} {
+		t.Run(source, func(t *testing.T) {
+			err := interpreter.NewWithWriter(&bytes.Buffer{}).Execute(parseProgram(t, source))
+			var runtimeErr *loxerrors.RuntimeError
+			if !stderrors.As(err, &runtimeErr) {
+				t.Fatalf("error = %T %v, want *errors.RuntimeError", err, err)
+			}
+			if runtimeErr.Token.Lexeme != "missing" || runtimeErr.Message != "Undefined variable 'missing'." {
+				t.Errorf("error = %#v", runtimeErr)
+			}
+		})
+	}
+}
+
+func TestEnvironmentDistinguishesNilFromMissing(t *testing.T) {
+	env := interpreter.NewEnvironment(nil)
+	env.Define("present", nil)
+
+	value, err := env.Get(token.Token{Type: token.IDENTIFIER, Lexeme: "present", Line: 1})
+	if err != nil || value != nil {
+		t.Errorf("defined nil = (%v, %v), want (nil, nil)", value, err)
+	}
+	if _, err := env.Get(token.Token{Type: token.IDENTIFIER, Lexeme: "missing", Line: 2}); err == nil {
+		t.Error("missing variable returned no error")
+	}
+}
+
+func TestRuntimeErrorRestoresBlockEnvironment(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+
+	err := interp.Execute(parseProgram(t, `{ var local = "inside"; print missing; }`))
+	if err == nil {
+		t.Fatal("failing block returned no error")
+	}
+	err = interp.Execute(parseProgram(t, `print local;`))
+	var runtimeErr *loxerrors.RuntimeError
+	if !stderrors.As(err, &runtimeErr) || runtimeErr.Token.Lexeme != "local" {
+		t.Fatalf("after block failure got %v, want undefined local", err)
+	}
 }

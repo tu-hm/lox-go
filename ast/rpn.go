@@ -28,6 +28,10 @@ func (p *RPNPrinter) VisitBinaryExpr(e *Binary) any {
 	return p.join(e.Left, e.Right) + " " + e.Operator.Lexeme
 }
 
+func (p *RPNPrinter) VisitAssignExpr(e *Assign) any {
+	return p.Print(e.Value) + " " + e.Name.Lexeme + " ="
+}
+
 // VisitGroupingExpr drops the parentheses. That is the whole point of RPN: the
 // operand order already fixes the grouping, so "(" and ")" carry no
 // information. Grouping still has to exist as a node — the parser needs it to
@@ -51,6 +55,10 @@ func (p *RPNPrinter) VisitUnaryExpr(e *Unary) any {
 
 func (p *RPNPrinter) VisitLiteralExpr(e *Literal) any {
 	return Stringify(e.Value)
+}
+
+func (p *RPNPrinter) VisitVariableExpr(e *Variable) any {
+	return e.Name.Lexeme
 }
 
 func (p *RPNPrinter) join(exprs ...Expr) string {

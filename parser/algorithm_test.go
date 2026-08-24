@@ -103,6 +103,57 @@ func TestAlgorithmsAgreeOnBatches(t *testing.T) {
 	}
 }
 
+func printStatements(statements []ast.Stmt) []string {
+	printer := ast.NewStmtPrinter(&ast.Printer{})
+	out := make([]string, len(statements))
+	for i, statement := range statements {
+		out[i] = printer.Print(statement)
+	}
+	return out
+}
+
+func TestAlgorithmsAgreeOnPrograms(t *testing.T) {
+	defer errors.Reset()
+
+	programs := []string{
+		`print 1 + 2;`,
+		`var a; var b = 2; print a; print b;`,
+		`var a = 1; a = a + 2; print a;`,
+		`var a; var b; a = b = 3;`,
+		`{ var a = "inner"; print a; }`,
+		`var global = 1; { { global = 2; } } print global;`,
+		`a + b = 3; print 4;`,
+		`{ print 1 + ; print 2; }`,
+	}
+
+	for _, src := range programs {
+		errors.Reset()
+		rd, _ := NewOf(Config{Kind: RecursiveDescent}, lexer.Lex(src))
+		wantStatements, wantErrors := rd.ParseProgram()
+		want := printStatements(wantStatements)
+
+		for k := llk.MinK; k <= llk.MaxK; k++ {
+			errors.Reset()
+			ll, err := NewOf(Config{Kind: LLK, K: k}, lexer.Lex(src))
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotStatements, gotErrors := ll.ParseProgram()
+			got := printStatements(gotStatements)
+			if len(gotErrors) != len(wantErrors) || len(got) != len(want) {
+				t.Errorf("%q at k=%d: rd gave %v / %d errors, llk gave %v / %d errors",
+					src, k, want, len(wantErrors), got, len(gotErrors))
+				continue
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Errorf("%q at k=%d statement %d:\n  rd  %s\n  llk %s", src, k, i, want[i], got[i])
+				}
+			}
+		}
+	}
+}
+
 // TestErrorPositionsMatch: both parsers must stop at the same token, even
 // though only the LL(k) one is required to by construction. Where they differ
 // is the message, and the two cases below are the ones that do — the LL(k)

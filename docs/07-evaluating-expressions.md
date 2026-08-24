@@ -30,7 +30,7 @@ that names the line. After this chapter `go run . script.lox` prints answers.
 10. [Milestones](#10-milestones)
 11. [Go gotchas specific to this chapter](#11-go-gotchas-specific-to-this-chapter)
 12. [Chapter challenges](#12-chapter-challenges)
-13. [What chapter 8 will need](#13-what-chapter-8-will-need-from-you)
+13. [Chapter 8 handoff](#13-chapter-8-handoff-implemented)
 
 ---
 
@@ -712,22 +712,17 @@ Test `1 / 0`, `-1 / 0`, `0 / 0` all error, and `1 / 0.5` → `2`.
 
 ---
 
-## 13. What chapter 8 will need from you
+## 13. Chapter 8 handoff (implemented)
 
-- **`Interpreter` as a struct with state.** Chapter 8 adds `Environment` to it,
-  and `main.go` must already be creating one per session, not one per
-  expression. §8 does this; do not "simplify" it back to a package-level
-  function.
-- **`interpret` taking a list.** `Interpret(expr)` becomes
-  `Interpret(stmts []ast.Stmt)`. Keep the single-expression form as
-  `evaluateExpr` or similar for the REPL and for tests — the value tables in §9
-  are worth keeping working.
-- **A second generated hierarchy.** `cmd/genast` already models this: `Stmt` is
-  a second `hierarchy` value plus one more call to generate. The
-  `var _ ast.ExprVisitor = (*Interpreter)(nil)` line gains a
-  `var _ ast.StmtVisitor` twin, and that pair is what will tell you at compile
-  time that you missed a node.
-- **The `;` hack in `main.go` goes away.** `containsSemicolon` exists because
-  chapter 6 had no statements. Chapter 8 has them, and `Run` becomes
-  unconditionally "parse a program, execute it". `-print=ast` should survive the
-  change.
+Chapter 8 now implements this handoff in `ast/stmt.go`,
+`interpreter/environment.go`, both parser front ends, and `main.go`.
+
+- **State lives in `Interpreter`.** Its current environment persists for a
+  whole script or REPL session.
+- **Both entry points survive.** `Execute([]ast.Stmt)` runs programs while
+  `Interpret(ast.Expr)` keeps the chapter 7 value tests and bare-expression
+  REPL useful.
+- **The second hierarchy is generated.** `ExprVisitor` and `StmtVisitor`
+  compile-time assertions catch missing interpreter and printer cases.
+- **Scripts always parse as programs.** Only the REPL uses a small syntax check
+  to retain automatic printing for unterminated bare expressions.

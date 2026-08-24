@@ -1,6 +1,5 @@
-// Package parser's tests live inside the package because synchronize is
-// unexported and, until statements arrive in chapter 8, uncalled — a test is
-// the only thing exercising it.
+// Package parser's tests live inside the package so they can directly pin the
+// recovery boundary implemented by the unexported synchronize method.
 //
 // These tests must not call t.Parallel(): the parser reports through the
 // package-level errors.HadError flag, which is process-global state.
@@ -248,5 +247,86 @@ func TestParseAllTerminates(t *testing.T) {
 		if len(exprs) == 0 && len(errs) == 0 && src != "" {
 			t.Errorf("%q: parsed to nothing at all, expected an error", src)
 		}
+	}
+}
+
+// ------------------------------------------------------------ parseProgram --
+
+func renderStatements(statements []ast.Stmt) []string {
+	printer := ast.NewStmtPrinter(&ast.Printer{})
+	out := make([]string, len(statements))
+	for i, statement := range statements {
+		out[i] = printer.Print(statement)
+	}
+	return out
+}
+
+func TestParseProgram(t *testing.T) {
+	defer errors.Reset()
+
+	statements, errs := parserFor(t, `
+		var a = 1;
+		print a;
+		a = a + 1;
+		{ var a; print a; }
+	`).ParseProgram()
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+
+	got := renderStatements(statements)
+	want := []string{
+		"(var a 1)",
+		"(print a)",
+		"(expr (= a (+ a 1)))",
+		"(block (var a) (print a))",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("statement %d = %s, want %s", i, got[i], want[i])
+		}
+	}
+}
+
+func TestAssignmentIsRightAssociative(t *testing.T) {
+	defer errors.Reset()
+
+	statements, errs := parserFor(t, "a = b = 3;").ParseProgram()
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if got := renderStatements(statements); len(got) != 1 || got[0] != "(expr (= a (= b 3)))" {
+		t.Errorf("got %v, want [(expr (= a (= b 3)))]", got)
+	}
+}
+
+func TestInvalidAssignmentTarget(t *testing.T) {
+	defer errors.Reset()
+
+	statements, errs := parserFor(t, "a + b = 3; print 4;").ParseProgram()
+	if len(errs) != 1 {
+		t.Fatalf("got %d errors, want 1: %v", len(errs), errs)
+	}
+	pe, ok := errs[0].(*ParseError)
+	if !ok || pe.Token.Type != token.EQUAL || pe.Message != "Invalid assignment target." {
+		t.Errorf("error = %v, want invalid target at '='", errs[0])
+	}
+	if got := renderStatements(statements); len(got) != 1 || got[0] != "(print 4)" {
+		t.Errorf("recovered as %v, want [(print 4)]", got)
+	}
+}
+
+func TestParseProgramRecoversInsideBlock(t *testing.T) {
+	defer errors.Reset()
+
+	statements, errs := parserFor(t, "{ print 1 + ; print 2; }").ParseProgram()
+	if len(errs) != 1 {
+		t.Fatalf("got %d errors, want 1: %v", len(errs), errs)
+	}
+	if got := renderStatements(statements); len(got) != 1 || got[0] != "(block (print 2))" {
+		t.Errorf("recovered as %v, want [(block (print 2))]", got)
 	}
 }

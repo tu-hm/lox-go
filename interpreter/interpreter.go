@@ -1,50 +1,105 @@
-// Package interpreter walks an ast.Expr and produces a runtime value.
+// Package interpreter evaluates expressions and executes Lox statement trees.
 package interpreter
 
 import (
+	"fmt"
+	"io"
+	"os"
+
 	"compiler101/ast"
 	"compiler101/lexer/token"
 	"compiler101/pkg/errors"
 )
 
-type Interpreter struct{}
+type Interpreter struct {
+	environment *Environment
+	out         io.Writer
+}
 
-var _ ast.ExprVisitor = (*Interpreter)(nil)
+var (
+	_ ast.ExprVisitor = (*Interpreter)(nil)
+	_ ast.StmtVisitor = (*Interpreter)(nil)
+)
 
 type runtimeSignal struct {
 	err *errors.RuntimeError
 }
 
 func New() *Interpreter {
-	return &Interpreter{}
+	return NewWithWriter(os.Stdout)
+}
+
+// NewWithWriter creates an interpreter whose Lox print statements write to
+// out. Supplying the writer keeps language output deterministic in tests.
+func NewWithWriter(out io.Writer) *Interpreter {
+	if out == nil {
+		out = io.Discard
+	}
+	return &Interpreter{environment: NewEnvironment(nil), out: out}
 }
 
 func (i *Interpreter) Interpret(e ast.Expr) (value any, err error) {
-	defer func() {
-		r := recover()
-		if r == nil {
-			return
-		}
-		sig, ok := r.(runtimeSignal)
-		if !ok {
-			panic(r)
-		}
-		value, err = nil, sig.err
-	}()
+	defer recoverRuntime(&err)
 
 	return i.evaluate(e), nil
+}
+
+// Execute runs a complete program. Statements do not produce a value; output
+// is an explicit side effect of a Lox print statement.
+func (i *Interpreter) Execute(statements []ast.Stmt) (err error) {
+	defer recoverRuntime(&err)
+	for _, statement := range statements {
+		i.execute(statement)
+	}
+	return nil
+}
+
+func recoverRuntime(err *error) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	sig, ok := r.(runtimeSignal)
+	if !ok {
+		panic(r)
+	}
+	*err = sig.err
 }
 
 func (i *Interpreter) evaluate(e ast.Expr) any {
 	return e.Accept(i)
 }
 
+func (i *Interpreter) execute(stmt ast.Stmt) {
+	stmt.Accept(i)
+}
+
 func (i *Interpreter) fail(t token.Token, message string) {
 	panic(runtimeSignal{err: &errors.RuntimeError{Token: t, Message: message}})
 }
 
+func (i *Interpreter) failWith(err *errors.RuntimeError) {
+	panic(runtimeSignal{err: err})
+}
+
+func (i *Interpreter) VisitAssignExpr(e *ast.Assign) any {
+	value := i.evaluate(e.Value)
+	if err := i.environment.Assign(e.Name, value); err != nil {
+		i.failWith(err)
+	}
+	return value
+}
+
 func (i *Interpreter) VisitLiteralExpr(e *ast.Literal) any {
 	return e.Value
+}
+
+func (i *Interpreter) VisitVariableExpr(e *ast.Variable) any {
+	value, err := i.environment.Get(e.Name)
+	if err != nil {
+		i.failWith(err)
+	}
+	return value
 }
 
 func (i *Interpreter) VisitGroupingExpr(e *ast.Grouping) any {
@@ -146,4 +201,39 @@ func (i *Interpreter) numbers(t token.Token, a, b any) (float64, float64) {
 		i.fail(t, "Operands must be numbers.")
 	}
 	return l, r
+}
+
+func (i *Interpreter) VisitBlockStmt(stmt *ast.Block) any {
+	i.executeBlock(stmt.Statements, NewEnvironment(i.environment))
+	return nil
+}
+
+func (i *Interpreter) VisitExpressionStmt(stmt *ast.Expression) any {
+	i.evaluate(stmt.Expression)
+	return nil
+}
+
+func (i *Interpreter) VisitPrintStmt(stmt *ast.Print) any {
+	value := i.evaluate(stmt.Expression)
+	fmt.Fprintln(i.out, ast.Stringify(value))
+	return nil
+}
+
+func (i *Interpreter) VisitVarStmt(stmt *ast.Var) any {
+	var value any
+	if stmt.Initializer != nil {
+		value = i.evaluate(stmt.Initializer)
+	}
+	i.environment.Define(stmt.Name.Lexeme, value)
+	return nil
+}
+
+func (i *Interpreter) executeBlock(statements []ast.Stmt, environment *Environment) {
+	previous := i.environment
+	i.environment = environment
+	defer func() { i.environment = previous }()
+
+	for _, statement := range statements {
+		i.execute(statement)
+	}
 }

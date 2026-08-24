@@ -1,7 +1,7 @@
 # The LL(k) parser — a second algorithm over the same grammar
 
 The repo now has two parser front ends. They take the same tokens, build the
-same `ast.Expr`, and are checked against each other on every input in
+same `ast.Expr` and `ast.Stmt` trees, and are checked against each other in
 `parser/algorithm_test.go`:
 
 | | `parser` | `parser/llk` |
@@ -138,13 +138,14 @@ means *not known yet*, so `⊕_k` treats it as absorbing — a body containing s
 a symbol contributes nothing this round rather than contributing a wrong prefix
 that could never be removed. `TestConcatIsAbsorbing` pins that down.
 
-### Why the grammar carries rules the parser never starts at
+### Why the table carries the complete program grammar
 
-`program → statements` and `statements → exprStatement statements | ε` exist
-only so FOLLOW is computed against a whole program. Without them
+`program → declarations` and the declaration/statement/block productions give
+FOLLOW analysis the complete context, even though recovery starts a fresh
+driver for each individual declaration. Without the complete grammar,
 `FOLLOW_2(expression)` would be `{"; EOF"}`, and an LL(2) parser would reject
-the perfectly good `1 + 2; 3;` — the window after the `;` reaches into the next
-statement. `TestFollowSpansStatements` guards it.
+the perfectly good `print 1 + 2; print 3;` — the window after the `;` reaches
+into the next statement. `TestFollowSpansStatements` guards it.
 
 ## 5. The table, and the check you get for free
 
@@ -165,19 +166,11 @@ That grammar is LL(2) — the second token separates the two — and
 whole payoff of the table: an ambiguity that recursive descent would resolve by
 accident, reported before a single input is parsed.
 
-Table size is the cost, and it grows with the number of k-strings the grammar
-admits:
-
-| k | table entries | build time |
-|---|---|---|
-| 1 | 118 | ~1 ms |
-| 2 | 1,146 | ~12 ms |
-| 3 | 10,324 | ~140 ms |
-| 4 | 98,092 | ~4.9 s |
-
-`MaxK` is 3 for that reason. The curve is also why real tools stop at LL(1) plus
-a hack, or move to LL(*)/PEG, rather than raising k. Tables are cached per k and
-shared by every parser, since the grammar is a compile-time constant.
+Table size is the cost, and it grows steeply with the number of k-strings the
+grammar admits. `MaxK` is 3 for that reason. The curve is also why real tools
+stop at LL(1) plus a hack, or move to LL(*)/PEG, rather than raising k. Tables
+are cached per k and shared by every parser, since the grammar is a compile-time
+constant.
 
 ## 6. The driver
 
@@ -186,11 +179,13 @@ start symbol; then repeatedly take the top of the stack:
 
 - **terminal** — match it against the input and push its token on the value
   stack, or fail with the message the grammar attached to that position;
-- **action** — run it against the value stack;
+- **action** — run it against the value stack, possibly returning a semantic
+  syntax error such as an invalid assignment target;
 - **nonterminal** — ask the table, push the predicted body reversed so its
   leftmost symbol comes off first.
 
-When the stack empties, exactly one value must remain: the tree. Anything else
+When the stack empties, exactly one value must remain: an expression, statement,
+or statement list depending on the entry point. Anything else
 is an action popping the wrong number of values — a grammar bug, reported as an
 internal error rather than as a syntax error, because the user's source did
 nothing wrong.
@@ -212,9 +207,11 @@ The one addition is that both stacks are dropped — whatever was half-expanded
 describes a parse that is not going to happen. `TestSynchronizeClearsTheStacks`
 checks the next statement really does start clean.
 
-`ParseAll` restarts the driver per statement rather than running one parse over
-the whole program, because recovery is much easier to reason about when the
-stack is empty at the boundary.
+`ParseProgram` restarts the driver per declaration rather than running one parse
+over the whole program. Blocks recursively do the same for their contents.
+Recovery is much easier to reason about when the driver stack is empty at each
+declaration boundary. The chapter 7 `ParseAll` expression entry point remains
+for compatibility and uses the same reset rule.
 
 Where the two front ends genuinely differ is *when* they notice. On `1 2`, the
 LL(k) parser fails at `factorTail` — the lookahead `NUMBER` is neither an
@@ -235,7 +232,7 @@ fmt.Print(tab)
 ```
 
 ```
-LL(1) table — 14 nonterminals, 32 productions
+LL(1) table
 
 termTail
   BANG_EQUAL                   termTail → ε

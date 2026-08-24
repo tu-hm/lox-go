@@ -1,6 +1,6 @@
 // Package llk is the second of this repo's two parser front ends: a
 // table-driven LL(k) parser over the same Lox grammar, producing the same
-// ast.Expr trees as parser's recursive-descent one.
+// expression and statement trees as parser's recursive-descent one.
 //
 // The difference is where the decisions live. Recursive descent spreads them
 // across a function per rule, made at run time by looking at the next token.
@@ -27,16 +27,14 @@ import (
 	"compiler101/pkg/errors"
 )
 
-// Bounds on the lookahead. k = 1 already parses this grammar — the Lox
-// expression grammar is LL(1) — so larger k is here to show that the machinery
+// Bounds on the lookahead. k = 1 already parses this grammar — the current Lox
+// grammar is LL(1) — so larger k is here to show that the machinery
 // is general, not because the language needs it.
 //
 // The ceiling is measured, not arbitrary. FIRST_k and FOLLOW_k hold strings of
-// k terminals, so the table grows with the number of such strings the grammar
-// admits; on this grammar that is 118 entries at k=1, 1,146 at k=2, 10,324 at
-// k=3, and 98,092 at k=4, where building it costs about five seconds. That
-// curve is the practical reason real tools stop at LL(1) plus a hack, or move
-// to LL(*)/PEG, rather than raising k.
+// k terminals, so the table grows steeply with k. That curve is the practical
+// reason real tools stop at LL(1) plus a hack, or move to LL(*)/PEG, rather
+// than raising k.
 const (
 	MinK     = 1
 	MaxK     = 3
@@ -55,6 +53,8 @@ type Parser struct {
 	work []item // parse stack, top at the end
 	vals stack  // value stack
 	la   seq    // reusable lookahead window, so predicting allocates nothing
+
+	programErrors []error
 }
 
 // New builds a parser with the default lookahead. It panics if the table cannot
@@ -99,14 +99,90 @@ func (p *Parser) K() int { return p.tab.k }
 
 // Parse reads one expression and requires the stream to end there.
 func (p *Parser) Parse() (ast.Expr, error) {
-	expr, err := p.run(nExpression)
+	value, err := p.run(nExpression)
 	if err != nil {
 		return nil, err
 	}
 	if !p.isAtEnd() {
 		return nil, errors.ParseErrorAt(p.peek(), expectEnd)
 	}
+	expr, ok := value.(ast.Expr)
+	if !ok {
+		return nil, fmt.Errorf("llk: internal error: %s produced %T, want ast.Expr", nExpression, value)
+	}
 	return expr, nil
+}
+
+// ParseProgram parses declarations until EOF. Statement selection and block
+// recovery are kept at this small orchestration layer; expression parsing and
+// each non-block statement shape still run through the checked LL(k) table.
+// Starting the driver afresh at each declaration preserves the parser's
+// existing recovery invariant: no half-expanded stack survives an error.
+func (p *Parser) ParseProgram() ([]ast.Stmt, []error) {
+	p.programErrors = p.programErrors[:0]
+	var statements []ast.Stmt
+
+	for !p.isAtEnd() {
+		if stmt := p.declarationRecovering(); stmt != nil {
+			statements = append(statements, stmt)
+		}
+	}
+
+	return statements, append([]error(nil), p.programErrors...)
+}
+
+func (p *Parser) declarationRecovering() ast.Stmt {
+	stmt, err := p.declaration()
+	if err == nil {
+		return stmt
+	}
+	p.programErrors = append(p.programErrors, err)
+	p.synchronize()
+	return nil
+}
+
+func (p *Parser) declaration() (ast.Stmt, error) {
+	if p.check(token.VAR) {
+		return p.runStatement(nVarDeclaration)
+	}
+	return p.statement()
+}
+
+func (p *Parser) statement() (ast.Stmt, error) {
+	switch {
+	case p.check(token.PRINT):
+		return p.runStatement(nPrintStatement)
+	case p.check(token.LEFT_BRACE):
+		return p.block()
+	default:
+		return p.runStatement(nExprStatement)
+	}
+}
+
+func (p *Parser) runStatement(start string) (ast.Stmt, error) {
+	value, err := p.run(start)
+	if err != nil {
+		return nil, err
+	}
+	stmt, ok := value.(ast.Stmt)
+	if !ok {
+		return nil, fmt.Errorf("llk: internal error: %s produced %T, want ast.Stmt", start, value)
+	}
+	return stmt, nil
+}
+
+func (p *Parser) block() (ast.Stmt, error) {
+	p.advance() // '{'
+	var statements []ast.Stmt
+	for !p.check(token.RIGHT_BRACE) && !p.isAtEnd() {
+		if stmt := p.declarationRecovering(); stmt != nil {
+			statements = append(statements, stmt)
+		}
+	}
+	if _, err := p.consume(token.RIGHT_BRACE, "Expect '}' after block."); err != nil {
+		return nil, err
+	}
+	return &ast.Block{Statements: statements}, nil
 }
 
 // ParseAll reads a batch of ';'-terminated expressions, recovering after each
@@ -120,13 +196,18 @@ func (p *Parser) ParseAll() ([]ast.Expr, []error) {
 	var errs []error
 
 	for !p.isAtEnd() {
-		expr, err := p.run(nExprStatement)
+		value, err := p.run(nExprStatement)
 		if err != nil {
 			errs = append(errs, err)
 			p.synchronize()
 			continue
 		}
-		exprs = append(exprs, expr)
+		stmt, ok := value.(*ast.Expression)
+		if !ok {
+			errs = append(errs, fmt.Errorf("llk: internal error: %s produced %T", nExprStatement, value))
+			continue
+		}
+		exprs = append(exprs, stmt.Expression)
 	}
 
 	return exprs, errs
@@ -141,7 +222,7 @@ func (p *Parser) ParseAll() ([]ast.Expr, []error) {
 //
 // Everything interesting has already happened in table.go. That is the point:
 // this loop is the same for any LL(k) grammar.
-func (p *Parser) run(start string) (ast.Expr, error) {
+func (p *Parser) run(start string) (any, error) {
 	p.work = append(p.work[:0], nt(start))
 	p.vals.reset()
 
@@ -151,7 +232,9 @@ func (p *Parser) run(start string) (ast.Expr, error) {
 
 		switch it.kind {
 		case itemAction:
-			it.act(&p.vals)
+			if err := it.act(&p.vals); err != nil {
+				return nil, err
+			}
 
 		case itemTerminal:
 			if !p.check(it.term) {
@@ -177,11 +260,7 @@ func (p *Parser) run(start string) (ast.Expr, error) {
 	if len(p.vals.vals) != 1 {
 		return nil, fmt.Errorf("llk: internal error: %d values left on the stack after %s", len(p.vals.vals), start)
 	}
-	expr, ok := p.vals.pop().(ast.Expr)
-	if !ok {
-		return nil, fmt.Errorf("llk: internal error: %s did not produce an expression", start)
-	}
-	return expr, nil
+	return p.vals.pop(), nil
 }
 
 // terminalMessage prefers the message the grammar attached to this position
@@ -238,6 +317,13 @@ func (p *Parser) synchronize() {
 }
 
 func (p *Parser) check(tp token.TokenType) bool { return p.peek().Type == tp }
+
+func (p *Parser) consume(tp token.TokenType, message string) (token.Token, error) {
+	if p.check(tp) {
+		return p.advance(), nil
+	}
+	return token.Token{}, errors.ParseErrorAt(p.peek(), message)
+}
 
 func (p *Parser) advance() token.Token {
 	if !p.isAtEnd() {

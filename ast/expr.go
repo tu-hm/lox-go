@@ -15,11 +15,22 @@ type Expr interface {
 // breaks every visitor that does not handle it — at compile time, which is the
 // whole reason for the pattern.
 type ExprVisitor interface {
+	VisitAssignExpr(e *Assign) any
 	VisitBinaryExpr(e *Binary) any
 	VisitGroupingExpr(e *Grouping) any
 	VisitLiteralExpr(e *Literal) any
 	VisitUnaryExpr(e *Unary) any
+	VisitVariableExpr(e *Variable) any
 }
+
+// Assign stores Value in the variable named by Name and evaluates to Value.
+type Assign struct {
+	Name  token.Token
+	Value Expr
+}
+
+func (e *Assign) Accept(v ExprVisitor) any { return v.VisitAssignExpr(e) }
+func (e *Assign) isExpr()                  {}
 
 // Binary is an infix operation: Left Operator Right.
 type Binary struct {
@@ -57,3 +68,11 @@ type Unary struct {
 
 func (e *Unary) Accept(v ExprVisitor) any { return v.VisitUnaryExpr(e) }
 func (e *Unary) isExpr()                  {}
+
+// Variable reads the binding identified by Name.
+type Variable struct {
+	Name token.Token
+}
+
+func (e *Variable) Accept(v ExprVisitor) any { return v.VisitVariableExpr(e) }
+func (e *Variable) isExpr()                  {}

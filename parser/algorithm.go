@@ -20,6 +20,10 @@ type Algorithm interface {
 	// ParseAll reads a batch of ';'-terminated expressions, recovering after
 	// each error so one bad statement costs one message.
 	ParseAll() ([]ast.Expr, []error)
+
+	// ParseProgram reads declarations and statements through EOF, recovering at
+	// declaration boundaries so callers can report more than one syntax error.
+	ParseProgram() ([]ast.Stmt, []error)
 }
 
 // Both front ends satisfy it, checked here because parser/llk cannot import

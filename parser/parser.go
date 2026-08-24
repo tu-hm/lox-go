@@ -13,6 +13,8 @@ import (
 type Parser struct {
 	Tokens  []token.Token
 	Current int
+
+	programErrors []error
 }
 
 // ParseError is an alias, not a new type: the LL(k) front end returns the same
@@ -46,12 +48,115 @@ func (p *Parser) Parse() (ast.Expr, error) {
 	return expr, nil
 }
 
+// ParseProgram parses a complete Lox program. A program is a sequence of
+// declarations terminated by EOF; errors are collected so a bad declaration
+// does not hide later independent errors.
+func (p *Parser) ParseProgram() ([]ast.Stmt, []error) {
+	p.programErrors = p.programErrors[:0]
+	var statements []ast.Stmt
+
+	for !p.isAtEnd() {
+		if stmt := p.declarationRecovering(); stmt != nil {
+			statements = append(statements, stmt)
+		}
+	}
+
+	return statements, append([]error(nil), p.programErrors...)
+}
+
+func (p *Parser) declarationRecovering() ast.Stmt {
+	stmt, err := p.declaration()
+	if err == nil {
+		return stmt
+	}
+	p.programErrors = append(p.programErrors, err)
+	p.synchronize()
+	return nil
+}
+
+func (p *Parser) declaration() (ast.Stmt, error) {
+	if p.match(token.VAR) {
+		return p.varDeclaration()
+	}
+	return p.statement()
+}
+
+func (p *Parser) varDeclaration() (ast.Stmt, error) {
+	name, err := p.consume(token.IDENTIFIER, "Expect variable name.")
+	if err != nil {
+		return nil, err
+	}
+
+	var initializer ast.Expr
+	if p.match(token.EQUAL) {
+		initializer, err = p.expression()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if _, err := p.consume(token.SEMICOLON, "Expect ';' after variable declaration."); err != nil {
+		return nil, err
+	}
+	return &ast.Var{Name: name, Initializer: initializer}, nil
+}
+
+func (p *Parser) statement() (ast.Stmt, error) {
+	if p.match(token.PRINT) {
+		return p.printStatement()
+	}
+	if p.match(token.LEFT_BRACE) {
+		statements, err := p.block()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.Block{Statements: statements}, nil
+	}
+	return p.expressionStmt()
+}
+
+func (p *Parser) printStatement() (ast.Stmt, error) {
+	value, err := p.expression()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.consume(token.SEMICOLON, "Expect ';' after value."); err != nil {
+		return nil, err
+	}
+	return &ast.Print{Expression: value}, nil
+}
+
+func (p *Parser) expressionStmt() (ast.Stmt, error) {
+	expr, err := p.expression()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.consume(token.SEMICOLON, "Expect ';' after expression."); err != nil {
+		return nil, err
+	}
+	return &ast.Expression{Expression: expr}, nil
+}
+
+func (p *Parser) block() ([]ast.Stmt, error) {
+	var statements []ast.Stmt
+	for !p.check(token.RIGHT_BRACE) && !p.isAtEnd() {
+		if stmt := p.declarationRecovering(); stmt != nil {
+			statements = append(statements, stmt)
+		}
+	}
+
+	if _, err := p.consume(token.RIGHT_BRACE, "Expect '}' after block."); err != nil {
+		return nil, err
+	}
+	return statements, nil
+}
+
 func (p *Parser) ParseAll() ([]ast.Expr, []error) {
 	var exprs []ast.Expr
 	var errs []error
 
 	for !p.isAtEnd() {
-		expr, err := p.expressionStatement()
+		expr, err := p.expressionStatementExpr()
 		if err != nil {
 			errs = append(errs, err)
 			p.synchronize()
@@ -63,7 +168,9 @@ func (p *Parser) ParseAll() ([]ast.Expr, []error) {
 	return exprs, errs
 }
 
-func (p *Parser) expressionStatement() (ast.Expr, error) {
+// expressionStatementExpr is the chapter 7 batch parser retained for tests
+// and callers that specifically want a list of expression trees.
+func (p *Parser) expressionStatementExpr() (ast.Expr, error) {
 	expr, err := p.expression()
 	if err != nil {
 		return nil, err
@@ -90,7 +197,29 @@ func (p *Parser) synchronize() {
 }
 
 func (p *Parser) expression() (ast.Expr, error) {
-	return p.equality()
+	return p.assignment()
+}
+
+func (p *Parser) assignment() (ast.Expr, error) {
+	expr, err := p.equality()
+	if err != nil {
+		return nil, err
+	}
+
+	if p.match(token.EQUAL) {
+		equals := p.previous()
+		value, err := p.assignment()
+		if err != nil {
+			return nil, err
+		}
+
+		if variable, ok := expr.(*ast.Variable); ok {
+			return &ast.Assign{Name: variable.Name, Value: value}, nil
+		}
+		return nil, errorAt(equals, "Invalid assignment target.")
+	}
+
+	return expr, nil
 }
 
 func (p *Parser) equality() (ast.Expr, error) {
@@ -203,6 +332,8 @@ func (p *Parser) primary() (ast.Expr, error) {
 
 	case p.match(token.NUMBER, token.STRING):
 		return &ast.Literal{Value: p.previous().Literal}, nil
+	case p.match(token.IDENTIFIER):
+		return &ast.Variable{Name: p.previous()}, nil
 
 	case p.match(token.LEFT_PAREN):
 		expr, err := p.expression()

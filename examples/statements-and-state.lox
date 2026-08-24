@@ -1,0 +1,20 @@
+// Globals remember values between statements.
+var a = "global";
+var unset;
+print unset;
+
+// Blocks introduce lexical scopes and local variables shadow outer ones.
+{
+  var a = "local";
+  print a;
+  a = a + "!";
+  print a;
+}
+
+print a;
+
+// Assignment is an expression and associates to the right.
+var b;
+print a = b = "shared";
+print a;
+print b;

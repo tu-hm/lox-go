@@ -44,6 +44,37 @@ primary        → NUMBER | STRING | "true" | "false" | "nil"
 This is what `parser/parser.go` implements, one function per rule: the `*` is a
 `for` loop, and the rule it calls is the next rung down.
 
+## Chapter 8 — statements and state
+
+Chapter 8 changes the start symbol from one expression to a complete program,
+adds declarations and blocks, and inserts right-associative assignment at the
+bottom of the expression precedence ladder:
+
+```
+program        → declaration* EOF ;
+declaration    → varDecl | statement ;
+statement      → exprStmt | printStmt | block ;
+block          → "{" declaration* "}" ;
+varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
+printStmt      → "print" expression ";" ;
+exprStmt       → expression ";" ;
+
+expression     → assignment ;
+assignment     → IDENTIFIER "=" assignment | equality ;
+equality       → comparison ( ( "!=" | "==" ) comparison )* ;
+comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+term           → factor ( ( "-" | "+" ) factor )* ;
+factor         → unary ( ( "/" | "*" ) unary )* ;
+unary          → ( "!" | "-" ) unary | primary ;
+primary        → NUMBER | STRING | "true" | "false" | "nil"
+               | "(" expression ")" | IDENTIFIER ;
+```
+
+The recursive-descent parser accepts the broader `equality ( "=" assignment )?`
+shape first, then validates the left expression as a variable. That one-token
+lookahead technique is what lets later chapters add property assignment without
+backtracking.
+
 ## The LL(k) form — what the table-driven parser reads
 
 `parser/llk` parses the same language from the same grammar written differently,
@@ -64,15 +95,22 @@ termTail       → "-" factor termTail
 one, so `( "-" | "+" )` becomes one production per operator — the same
 desugaring as challenge 1 below, needed for real this time.
 
-The full grammar, with the statement rules that only exist so FOLLOW sets are
-computed against a whole program:
+The full chapter 8 LL form is:
 
 ```
-program        → statements ;
-statements     → exprStatement statements | ε ;
+program        → declarations ;
+declarations   → declaration declarations | ε ;
+declaration    → varDeclaration | statement ;
+statement      → exprStatement | printStatement | block ;
+varDeclaration → "var" IDENTIFIER varInitializer ";" ;
+varInitializer → "=" expression | ε ;
+printStatement → "print" expression ";" ;
 exprStatement  → expression ";" ;
+block          → "{" declarations "}" ;
 
-expression     → equality ;
+expression     → assignment ;
+assignment     → equality assignmentTail ;
+assignmentTail → "=" assignment | ε ;
 equality       → comparison equalityTail ;
 equalityTail   → "!=" comparison equalityTail
                | "==" comparison equalityTail
@@ -87,8 +125,12 @@ factor         → unary factorTail ;
 factorTail     → "/" unary factorTail | "*" unary factorTail | ε ;
 unary          → "!" unary | "-" unary | primary ;
 primary        → NUMBER | STRING | "true" | "false" | "nil"
-               | "(" expression ")" ;
+               | IDENTIFIER | "(" expression ")" ;
 ```
+
+`assignmentTail` is the left-factored form of assignment. Its action runs after
+the right-hand side and checks that the value already on the stack is a
+`Variable`; this preserves both right associativity and LL(1) prediction.
 
 The tail rewrite loses the associativity that left recursion gave for free.
 `parser/llk` gets it back by placing the tree-building action *inside* the
@@ -111,10 +153,16 @@ since every LL(1) grammar is LL(k) for larger k.
 
 | Grammar rule | AST node | Fields |
 |---|---|---|
+| assignment | `Assign` | `Name token.Token`, `Value Expr` |
 | `binary` | `Binary` | `Left Expr`, `Operator token.Token`, `Right Expr` |
 | `grouping` | `Grouping` | `Expression Expr` |
 | `literal` | `Literal` | `Value any` |
 | `unary` | `Unary` | `Operator token.Token`, `Right Expr` |
+| variable access | `Variable` | `Name token.Token` |
+| block | `Block` | `Statements []Stmt` |
+| expression statement | `Expression` | `Expression Expr` |
+| print statement | `Print` | `Expression Expr` |
+| variable declaration | `Var` | `Name token.Token`, `Initializer Expr` |
 
 `operator` gets no node — the token already carries which operator it is. That
 is the "abstract" in abstract syntax tree: only what the interpreter needs

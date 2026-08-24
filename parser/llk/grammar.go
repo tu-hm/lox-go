@@ -5,6 +5,7 @@ import (
 
 	"compiler101/ast"
 	"compiler101/lexer/token"
+	"compiler101/pkg/errors"
 )
 
 // A grammar here is data, not code. The recursive-descent parser encodes the
@@ -132,15 +133,19 @@ func (e *GrammarError) Error() string { return "llk: " + e.Message }
 
 // ------------------------------------------------------------- the grammar --
 
-// Nonterminal names. program and statements are never started at; they exist
-// so FOLLOW sets are computed against a whole program rather than against a
-// single statement. Without them, FOLLOW_k(exprStatement) would be {EOF} and a
-// k>1 parser would reject the token after a ';' that begins the next statement.
 const (
-	nProgram       = "program"
-	nStatements    = "statements"
-	nExprStatement = "exprStatement"
-	nExpression    = "expression"
+	nProgram        = "program"
+	nDeclarations   = "declarations"
+	nDeclaration    = "declaration"
+	nStatement      = "statement"
+	nVarDeclaration = "varDeclaration"
+	nVarInitializer = "varInitializer"
+	nPrintStatement = "printStatement"
+	nExprStatement  = "exprStatement"
+	nBlock          = "block"
+	nExpression     = "expression"
+	nAssignment     = "assignment"
+	nAssignmentTail = "assignmentTail"
 )
 
 const (
@@ -149,8 +154,9 @@ const (
 	expectStmt = "Expect a statement."
 )
 
-// loxGrammar is the chapter 6 precedence ladder in LL form. Two rewrites turn
-// the recursive-descent grammar into this one:
+// loxGrammar is the chapter 8 program grammar and precedence ladder in LL
+// form. Two rewrites turn the recursive-descent expression grammar into this
+// one:
 //
 //	term → term ( "-" | "+" ) factor        left recursion — an LL parser
 //	                                        would recurse forever on it
@@ -167,17 +173,61 @@ const (
 func loxGrammar() *grammar {
 	g := newGrammar()
 
-	g.add(nProgram, nt(nStatements))
-	g.add(nStatements, nt(nExprStatement), nt(nStatements))
-	g.add(nStatements) // ε
+	g.add(nProgram, nt(nDeclarations))
+	g.add(nDeclarations, nt(nDeclaration), nt(nDeclarations), act(prependStatement))
+	g.add(nDeclarations, act(emptyStatements)) // ε
+
+	g.add(nDeclaration, nt(nVarDeclaration))
+	g.add(nDeclaration, nt(nStatement))
+
+	g.add(nStatement, nt(nExprStatement))
+	g.add(nStatement, nt(nPrintStatement))
+	g.add(nStatement, nt(nBlock))
+
+	g.add(nVarDeclaration,
+		term(token.VAR, ""),
+		term(token.IDENTIFIER, "Expect variable name."),
+		nt(nVarInitializer),
+		term(token.SEMICOLON, "Expect ';' after variable declaration."),
+		act(mkVarStatement),
+	)
+	g.add(nVarInitializer,
+		term(token.EQUAL, ""),
+		nt(nExpression),
+		act(mkInitializer),
+	)
+	g.add(nVarInitializer, act(noInitializer)) // ε
+
+	g.add(nPrintStatement,
+		term(token.PRINT, ""),
+		nt(nExpression),
+		term(token.SEMICOLON, "Expect ';' after value."),
+		act(mkPrintStatement),
+	)
 
 	g.add(nExprStatement,
 		nt(nExpression),
 		term(token.SEMICOLON, "Expect ';' after expression."),
-		act(discard), // the ';' is punctuation; it leaves no node behind
+		act(mkExpressionStatement),
 	)
 
-	g.add(nExpression, nt("equality"))
+	g.add(nBlock,
+		term(token.LEFT_BRACE, ""),
+		nt(nDeclarations),
+		term(token.RIGHT_BRACE, "Expect '}' after block."),
+		act(mkBlockStatement),
+	)
+
+	// Factoring the optional assignment tail keeps the grammar LL(1). The
+	// semantic action validates the already-parsed left side as an l-value.
+	g.add(nExpression, nt(nAssignment))
+	g.add(nAssignment, nt("equality"), nt(nAssignmentTail))
+	g.add(nAssignmentTail,
+		term(token.EQUAL, ""),
+		nt(nAssignment),
+		act(mkAssign),
+	)
+	g.add(nAssignmentTail) // ε
 
 	level(g, "equality", "comparison", token.BANG_EQUAL, token.EQUAL_EQUAL)
 	level(g, "comparison", "term", token.GREATER, token.GREATER_EQUAL, token.LESS, token.LESS_EQUAL)
@@ -195,6 +245,7 @@ func loxGrammar() *grammar {
 	g.add("primary", term(token.NIL, ""), act(mkConst(nil)))
 	g.add("primary", term(token.NUMBER, ""), act(mkLiteral))
 	g.add("primary", term(token.STRING, ""), act(mkLiteral))
+	g.add("primary", term(token.IDENTIFIER, ""), act(mkVariable))
 	g.add("primary",
 		term(token.LEFT_PAREN, ""),
 		nt(nExpression),
@@ -202,13 +253,17 @@ func loxGrammar() *grammar {
 		act(mkGrouping),
 	)
 
-	for _, name := range []string{nExpression, "equality", "comparison", "term", "factor", "unary", "primary"} {
+	for _, name := range []string{nExpression, nAssignment, "equality", "comparison", "term", "factor", "unary", "primary"} {
 		g.fail[name] = expectExpr
 	}
 	g.fail[nProgram] = expectStmt
-	g.fail[nStatements] = expectStmt
+	g.fail[nDeclarations] = expectStmt
+	g.fail[nDeclaration] = expectStmt
+	g.fail[nStatement] = expectStmt
 
 	g.entry(nProgram, expectStmt)
+	g.entry(nVarDeclaration, expectStmt)
+	g.entry(nPrintStatement, expectStmt)
 	g.entry(nExprStatement, expectExpr)
 	g.entry(nExpression, expectExpr)
 
@@ -251,7 +306,7 @@ func level(g *grammar, name, next string, ops ...token.TokenType) {
 // action is a semantic action: a production body element that builds AST
 // instead of matching input. Actions run in body order, so each one finds
 // exactly the values the symbols to its left pushed.
-type action func(*stack)
+type action func(*stack) error
 
 // stack is the value stack. Every matched terminal pushes its token, every
 // completed nonterminal leaves its node, and actions pop what they need. The
@@ -280,42 +335,139 @@ func (s *stack) token() token.Token {
 	return t
 }
 
+func (s *stack) stmt() ast.Stmt {
+	stmt, _ := s.pop().(ast.Stmt)
+	return stmt
+}
+
+func (s *stack) statements() []ast.Stmt {
+	statements, _ := s.pop().([]ast.Stmt)
+	return statements
+}
+
 func (s *stack) reset() { s.vals = s.vals[:0] }
 
 // discard drops a token that carries no meaning past the parse — ';' and the
 // like. Without it the value stack would not empty out to a single node.
-func discard(s *stack) { s.pop() }
+func discard(s *stack) error {
+	s.pop()
+	return nil
+}
 
-func mkBinary(s *stack) {
+func mkBinary(s *stack) error {
 	right := s.expr()
 	op := s.token()
 	left := s.expr()
 	s.push(&ast.Binary{Left: left, Operator: op, Right: right})
+	return nil
 }
 
-func mkUnary(s *stack) {
+func mkUnary(s *stack) error {
 	right := s.expr()
 	op := s.token()
 	s.push(&ast.Unary{Operator: op, Right: right})
+	return nil
 }
 
 // mkGrouping pops in reverse of the body order: ')' then the expression
 // then '('.
-func mkGrouping(s *stack) {
+func mkGrouping(s *stack) error {
 	s.token()
 	inner := s.expr()
 	s.token()
 	s.push(&ast.Grouping{Expression: inner})
+	return nil
 }
 
 // mkLiteral takes the value the scanner already computed. NUMBER and STRING
 // are the only terminals that carry one.
-func mkLiteral(s *stack) { s.push(&ast.Literal{Value: s.token().Literal}) }
+func mkLiteral(s *stack) error {
+	s.push(&ast.Literal{Value: s.token().Literal})
+	return nil
+}
+
+func mkVariable(s *stack) error {
+	s.push(&ast.Variable{Name: s.token()})
+	return nil
+}
+
+func mkAssign(s *stack) error {
+	value := s.expr()
+	equals := s.token()
+	left := s.expr()
+	variable, ok := left.(*ast.Variable)
+	if !ok {
+		return errors.ParseErrorAt(equals, "Invalid assignment target.")
+	}
+	s.push(&ast.Assign{Name: variable.Name, Value: value})
+	return nil
+}
 
 // mkConst is for keywords whose value is the keyword: true, false, nil.
 func mkConst(v any) action {
-	return func(s *stack) {
+	return func(s *stack) error {
 		s.token()
 		s.push(&ast.Literal{Value: v})
+		return nil
 	}
+}
+
+type initializer struct{ expression ast.Expr }
+
+func mkInitializer(s *stack) error {
+	expr := s.expr()
+	s.token() // '='
+	s.push(initializer{expression: expr})
+	return nil
+}
+
+func noInitializer(s *stack) error {
+	s.push(initializer{})
+	return nil
+}
+
+func mkVarStatement(s *stack) error {
+	s.token() // ';'
+	init, _ := s.pop().(initializer)
+	name := s.token()
+	s.token() // 'var'
+	s.push(&ast.Var{Name: name, Initializer: init.expression})
+	return nil
+}
+
+func mkPrintStatement(s *stack) error {
+	s.token() // ';'
+	expr := s.expr()
+	s.token() // 'print'
+	s.push(&ast.Print{Expression: expr})
+	return nil
+}
+
+func mkExpressionStatement(s *stack) error {
+	s.token() // ';'
+	s.push(&ast.Expression{Expression: s.expr()})
+	return nil
+}
+
+func emptyStatements(s *stack) error {
+	s.push([]ast.Stmt{})
+	return nil
+}
+
+func prependStatement(s *stack) error {
+	tail := s.statements()
+	head := s.stmt()
+	statements := make([]ast.Stmt, 0, len(tail)+1)
+	statements = append(statements, head)
+	statements = append(statements, tail...)
+	s.push(statements)
+	return nil
+}
+
+func mkBlockStatement(s *stack) error {
+	s.token() // '}'
+	statements := s.statements()
+	s.token() // '{'
+	s.push(&ast.Block{Statements: statements})
+	return nil
 }
