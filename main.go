@@ -121,7 +121,7 @@ func isBareExpression(tokens []token.Token) bool {
 		return true
 	}
 	switch tokens[0].Type {
-	case token.PRINT, token.VAR, token.LEFT_BRACE:
+	case token.PRINT, token.VAR, token.LEFT_BRACE, token.FOR, token.IF, token.WHILE:
 		return false
 	default:
 		return true

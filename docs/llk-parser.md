@@ -138,7 +138,7 @@ means *not known yet*, so `⊕_k` treats it as absorbing — a body containing s
 a symbol contributes nothing this round rather than contributing a wrong prefix
 that could never be removed. `TestConcatIsAbsorbing` pins that down.
 
-### Why the table carries the complete program grammar
+### Why the table carries the core program grammar
 
 `program → declarations` and the declaration/statement/block productions give
 FOLLOW analysis the complete context, even though recovery starts a fresh
@@ -146,6 +146,23 @@ driver for each individual declaration. Without the complete grammar,
 `FOLLOW_2(expression)` would be `{"; EOF"}`, and an LL(2) parser would reject
 the perfectly good `print 1 + 2; print 3;` — the window after the `;` reaches
 into the next statement. `TestFollowSpansStatements` guards it.
+
+That context is required by the internal whole-program grammar entry and keeps
+the table's model complete. The public recovering entry point additionally
+bounds each leaf-statement run at its semicolon, so it can safely restart the
+driver for the next declaration.
+
+Chapter 9 adds one deliberate boundary. `if`, `while`, and `for` are
+orchestrated recursively in `parser.go`, alongside recoverable blocks. Putting
+the conventional `ifStmt → ... ( "else" statement )?` rule into the prediction
+table would introduce the dangling-`else` conflict that the table is designed
+to reject. The orchestration layer eagerly parses an `else`, matching recursive
+descent's nearest-`if` rule.
+
+Nested header expressions still use the table. For `k > 1`, their lookahead is
+masked after the closing `)` or `;`; otherwise a condition run could see tokens
+from the following statement, a continuation outside its table entry. The
+delimiter remains visible, while anything beyond it is normalized to EOF.
 
 ## 5. The table, and the check you get for free
 
@@ -190,8 +207,9 @@ is an action popping the wrong number of values — a grammar bug, reported as a
 internal error rather than as a syntax error, because the user's source did
 nothing wrong.
 
-This loop is identical for any LL(k) grammar. Everything specific to Lox lives
-in `grammar.go`.
+This loop is identical for any LL(k) grammar. Lox's table-driven expression and
+leaf-statement rules live in `grammar.go`; recoverable blocks and compound
+statement orchestration live beside the driver in `parser.go`.
 
 ## 7. Errors
 
@@ -208,7 +226,8 @@ describes a parse that is not going to happen. `TestSynchronizeClearsTheStacks`
 checks the next statement really does start clean.
 
 `ParseProgram` restarts the driver per declaration rather than running one parse
-over the whole program. Blocks recursively do the same for their contents.
+over the whole program. Blocks recursively do the same for their contents, and
+chapter 9 control statements recursively call the same statement dispatcher.
 Recovery is much easier to reason about when the driver stack is empty at each
 declaration boundary. The chapter 7 `ParseAll` expression entry point remains
 for compatibility and uses the same reset rule.

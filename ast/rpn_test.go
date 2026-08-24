@@ -38,6 +38,15 @@ func TestRPNPrinter(t *testing.T) {
 		{"string literal", str("hi"), "hi"},
 		{"simple binary", binary(num(1), token.PLUS, "+", num(2)), "1 2 +"},
 		{
+			"logical expression",
+			&ast.Logical{
+				Left:     &ast.Literal{Value: false},
+				Operator: op(token.OR, "or"),
+				Right:    &ast.Literal{Value: true},
+			},
+			"false true or",
+		},
+		{
 			"grouping leaves no trace",
 			group(binary(num(1), token.PLUS, "+", num(2))),
 			"1 2 +",

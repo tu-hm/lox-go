@@ -18,6 +18,7 @@ var sources = []string{
 	"-1", "--1", "!true", "!!nil", "-1 * -2",
 	"1 < 2 == true", "2 >= 1 != false", "1 < 2 <= 3 > 4 >= 5",
 	`"a" + "b" == "ab"`, "((((42))))", "(1 + 2) * (3 - 4) / (5 + 6)",
+	"false or true and false", "true or false or nil", "true and false == false",
 	// and the failures
 	"", "*", ")", "(", "(1 + 2", "1 +", "1 + 2)", "1 2", "+;", "1 + * 2",
 }
@@ -124,6 +125,12 @@ func TestAlgorithmsAgreeOnPrograms(t *testing.T) {
 		`var global = 1; { { global = 2; } } print global;`,
 		`a + b = 3; print 4;`,
 		`{ print 1 + ; print 2; }`,
+		`if (true) if (false) print 1; else print 2;`,
+		`if ((true and false) or true) print 1; else print 2;`,
+		`while (i < 3) i = i + 1;`,
+		`for (var i = 0; i < 3; i = i + 1) print i;`,
+		`for (;;) print 1;`,
+		`for (i = 0; i < 2;) print i;`,
 	}
 
 	for _, src := range programs {

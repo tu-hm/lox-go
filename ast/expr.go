@@ -19,6 +19,7 @@ type ExprVisitor interface {
 	VisitBinaryExpr(e *Binary) any
 	VisitGroupingExpr(e *Grouping) any
 	VisitLiteralExpr(e *Literal) any
+	VisitLogicalExpr(e *Logical) any
 	VisitUnaryExpr(e *Unary) any
 	VisitVariableExpr(e *Variable) any
 }
@@ -59,6 +60,16 @@ type Literal struct {
 
 func (e *Literal) Accept(v ExprVisitor) any { return v.VisitLiteralExpr(e) }
 func (e *Literal) isExpr()                  {}
+
+// Logical is a short-circuiting and/or operation: Left Operator Right.
+type Logical struct {
+	Left     Expr
+	Operator token.Token
+	Right    Expr
+}
+
+func (e *Logical) Accept(v ExprVisitor) any { return v.VisitLogicalExpr(e) }
+func (e *Logical) isExpr()                  {}
 
 // Unary is a prefix operation: Operator Right.
 type Unary struct {

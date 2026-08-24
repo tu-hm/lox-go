@@ -330,3 +330,79 @@ func TestParseProgramRecoversInsideBlock(t *testing.T) {
 		t.Errorf("recovered as %v, want [(block (print 2))]", got)
 	}
 }
+
+func TestLogicalPrecedenceAndAssociativity(t *testing.T) {
+	defer errors.Reset()
+
+	for source, want := range map[string]string{
+		"false or true and false": "(or false (and true false))",
+		"true or false or nil":    "(or (or true false) nil)",
+		"true and false == false": "(and true (== false false))",
+	} {
+		expr, err := parserFor(t, source).Parse()
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", source, err)
+		}
+		if got := (&ast.Printer{}).Print(expr); got != want {
+			t.Errorf("Parse(%q) = %s, want %s", source, got, want)
+		}
+	}
+}
+
+func TestParseControlFlowAndDesugarFor(t *testing.T) {
+	defer errors.Reset()
+
+	tests := []struct {
+		source string
+		want   string
+	}{
+		{
+			"if (true) if (false) print 1; else print 2;",
+			"(if true (if false (print 1) (print 2)))",
+		},
+		{
+			"while (i < 3) i = i + 1;",
+			"(while (< i 3) (expr (= i (+ i 1))))",
+		},
+		{
+			"for (var i = 0; i < 3; i = i + 1) print i;",
+			"(block (var i 0) (while (< i 3) (block (print i) (expr (= i (+ i 1))))))",
+		},
+		{
+			"for (;;) print 1;",
+			"(while true (print 1))",
+		},
+		{
+			"for (i = 0; i < 2;) print i;",
+			"(block (expr (= i 0)) (while (< i 2) (print i)))",
+		},
+	}
+
+	for _, tt := range tests {
+		statements, errs := parserFor(t, tt.source).ParseProgram()
+		if len(errs) != 0 {
+			t.Fatalf("ParseProgram(%q): %v", tt.source, errs)
+		}
+		got := renderStatements(statements)
+		if len(got) != 1 || got[0] != tt.want {
+			t.Errorf("ParseProgram(%q) = %v, want [%s]", tt.source, got, tt.want)
+		}
+	}
+}
+
+func TestControlFlowParseErrors(t *testing.T) {
+	defer errors.Reset()
+
+	for _, source := range []string{
+		"if true) print 1;",
+		"if (true print 1;",
+		"while true) print 1;",
+		"for (var i = 0 i < 2; i = i + 1) print i;",
+		"if (true) var a = 1;",
+	} {
+		_, errs := parserFor(t, source).ParseProgram()
+		if len(errs) == 0 {
+			t.Errorf("ParseProgram(%q) returned no error", source)
+		}
+	}
+}

@@ -1,6 +1,8 @@
 // Package llk is the second of this repo's two parser front ends: a
-// table-driven LL(k) parser over the same Lox grammar, producing the same
-// expression and statement trees as parser's recursive-descent one.
+// table-driven LL(k) parser for expressions and leaf statements, with a small
+// recursive orchestration layer for recoverable blocks and compound control
+// statements. It produces the same trees as parser's recursive-descent front
+// end.
 //
 // The difference is where the decisions live. Recursive descent spreads them
 // across a function per rule, made at run time by looking at the next token.
@@ -54,6 +56,11 @@ type Parser struct {
 	vals stack  // value stack
 	la   seq    // reusable lookahead window, so predicting allocates nothing
 
+	// lookaheadLimit is one past a delimiter that a nested expression run may
+	// inspect. Tokens after it are masked as EOF so k > 1 cannot leak from an
+	// if/while/for header into the following statement.
+	lookaheadLimit int
+
 	programErrors []error
 }
 
@@ -99,12 +106,20 @@ func (p *Parser) K() int { return p.tab.k }
 
 // Parse reads one expression and requires the stream to end there.
 func (p *Parser) Parse() (ast.Expr, error) {
-	value, err := p.run(nExpression)
+	expr, err := p.expression()
 	if err != nil {
 		return nil, err
 	}
 	if !p.isAtEnd() {
 		return nil, errors.ParseErrorAt(p.peek(), expectEnd)
+	}
+	return expr, nil
+}
+
+func (p *Parser) expression() (ast.Expr, error) {
+	value, err := p.run(nExpression)
+	if err != nil {
+		return nil, err
 	}
 	expr, ok := value.(ast.Expr)
 	if !ok {
@@ -150,8 +165,17 @@ func (p *Parser) declaration() (ast.Stmt, error) {
 
 func (p *Parser) statement() (ast.Stmt, error) {
 	switch {
+	case p.check(token.FOR):
+		p.advance()
+		return p.forStatement()
+	case p.check(token.IF):
+		p.advance()
+		return p.ifStatement()
 	case p.check(token.PRINT):
 		return p.runStatement(nPrintStatement)
+	case p.check(token.WHILE):
+		p.advance()
+		return p.whileStatement()
 	case p.check(token.LEFT_BRACE):
 		return p.block()
 	default:
@@ -159,7 +183,122 @@ func (p *Parser) statement() (ast.Stmt, error) {
 	}
 }
 
+func (p *Parser) forStatement() (ast.Stmt, error) {
+	if _, err := p.consume(token.LEFT_PAREN, "Expect '(' after 'for'."); err != nil {
+		return nil, err
+	}
+
+	var initializer ast.Stmt
+	var err error
+	switch {
+	case p.check(token.SEMICOLON):
+		p.advance()
+	case p.check(token.VAR):
+		initializer, err = p.runStatement(nVarDeclaration)
+	default:
+		initializer, err = p.runStatement(nExprStatement)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var condition ast.Expr
+	if !p.check(token.SEMICOLON) {
+		condition, err = p.expressionBefore(token.SEMICOLON)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if _, err := p.consume(token.SEMICOLON, "Expect ';' after loop condition."); err != nil {
+		return nil, err
+	}
+
+	var increment ast.Expr
+	if !p.check(token.RIGHT_PAREN) {
+		increment, err = p.expressionBefore(token.RIGHT_PAREN)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if _, err := p.consume(token.RIGHT_PAREN, "Expect ')' after for clauses."); err != nil {
+		return nil, err
+	}
+
+	body, err := p.statement()
+	if err != nil {
+		return nil, err
+	}
+	if increment != nil {
+		body = &ast.Block{Statements: []ast.Stmt{
+			body,
+			&ast.Expression{Expression: increment},
+		}}
+	}
+	if condition == nil {
+		condition = &ast.Literal{Value: true}
+	}
+	body = &ast.While{Condition: condition, Body: body}
+	if initializer != nil {
+		body = &ast.Block{Statements: []ast.Stmt{initializer, body}}
+	}
+
+	return body, nil
+}
+
+func (p *Parser) ifStatement() (ast.Stmt, error) {
+	if _, err := p.consume(token.LEFT_PAREN, "Expect '(' after 'if'."); err != nil {
+		return nil, err
+	}
+	condition, err := p.expressionBefore(token.RIGHT_PAREN)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.consume(token.RIGHT_PAREN, "Expect ')' after if condition."); err != nil {
+		return nil, err
+	}
+
+	thenBranch, err := p.statement()
+	if err != nil {
+		return nil, err
+	}
+	var elseBranch ast.Stmt
+	if p.check(token.ELSE) {
+		p.advance()
+		elseBranch, err = p.statement()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &ast.If{Condition: condition, ThenBranch: thenBranch, ElseBranch: elseBranch}, nil
+}
+
+func (p *Parser) whileStatement() (ast.Stmt, error) {
+	if _, err := p.consume(token.LEFT_PAREN, "Expect '(' after 'while'."); err != nil {
+		return nil, err
+	}
+	condition, err := p.expressionBefore(token.RIGHT_PAREN)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.consume(token.RIGHT_PAREN, "Expect ')' after condition."); err != nil {
+		return nil, err
+	}
+	body, err := p.statement()
+	if err != nil {
+		return nil, err
+	}
+
+	return &ast.While{Condition: condition, Body: body}, nil
+}
+
 func (p *Parser) runStatement(start string) (ast.Stmt, error) {
+	previous := p.lookaheadLimit
+	if limit := p.delimiterLimit(token.SEMICOLON); limit != 0 {
+		p.lookaheadLimit = limit
+	}
+	defer func() { p.lookaheadLimit = previous }()
+
 	value, err := p.run(start)
 	if err != nil {
 		return nil, err
@@ -169,6 +308,41 @@ func (p *Parser) runStatement(start string) (ast.Stmt, error) {
 		return nil, fmt.Errorf("llk: internal error: %s produced %T, want ast.Stmt", start, value)
 	}
 	return stmt, nil
+}
+
+func (p *Parser) expressionBefore(delimiter token.TokenType) (ast.Expr, error) {
+	limit := p.delimiterLimit(delimiter)
+	previous := p.lookaheadLimit
+	p.lookaheadLimit = limit
+	defer func() { p.lookaheadLimit = previous }()
+
+	return p.expression()
+}
+
+// delimiterLimit finds the first delimiter outside nested parentheses and
+// returns the exclusive lookahead boundary just after it. A missing delimiter
+// leaves lookahead unbounded so the expression parser can report its own error
+// before the caller reports the missing punctuation.
+func (p *Parser) delimiterLimit(delimiter token.TokenType) int {
+	depth := 0
+	for at := p.Current; at < len(p.Tokens); at++ {
+		switch p.Tokens[at].Type {
+		case token.LEFT_PAREN:
+			depth++
+		case token.RIGHT_PAREN:
+			if depth == 0 && delimiter == token.RIGHT_PAREN {
+				return at + 1
+			}
+			if depth > 0 {
+				depth--
+			}
+		default:
+			if depth == 0 && p.Tokens[at].Type == delimiter {
+				return at + 1
+			}
+		}
+	}
+	return 0
 }
 
 func (p *Parser) block() (ast.Stmt, error) {
@@ -220,8 +394,8 @@ func (p *Parser) ParseAll() ([]ast.Expr, []error) {
 // action, or replace a nonterminal by the production the table predicts. The
 // body goes on reversed so its leftmost symbol comes off first.
 //
-// Everything interesting has already happened in table.go. That is the point:
-// this loop is the same for any LL(k) grammar.
+// Everything about prediction has already happened in table.go. That is the
+// point: this loop is the same for any LL(k) grammar.
 func (p *Parser) run(start string) (any, error) {
 	p.work = append(p.work[:0], nt(start))
 	p.vals.reset()
@@ -278,7 +452,7 @@ func (p *Parser) window() seq {
 	w := p.la[:0]
 	for i := 0; i < p.tab.k; i++ {
 		t := token.EOF
-		if p.Current+i < len(p.Tokens) {
+		if (p.lookaheadLimit == 0 || p.Current+i < p.lookaheadLimit) && p.Current+i < len(p.Tokens) {
 			t = p.Tokens[p.Current+i].Type
 		}
 		w = append(w, t)

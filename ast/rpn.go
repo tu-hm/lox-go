@@ -40,6 +40,10 @@ func (p *RPNPrinter) VisitGroupingExpr(e *Grouping) any {
 	return p.Print(e.Expression)
 }
 
+func (p *RPNPrinter) VisitLogicalExpr(e *Logical) any {
+	return p.join(e.Left, e.Right) + " " + e.Operator.Lexeme
+}
+
 // VisitUnaryExpr spells unary minus "negate".
 //
 // RPN cannot tell arity from the operator alone: "123 -" would be

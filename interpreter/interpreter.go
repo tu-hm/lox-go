@@ -106,6 +106,25 @@ func (i *Interpreter) VisitGroupingExpr(e *ast.Grouping) any {
 	return i.evaluate(e.Expression)
 }
 
+func (i *Interpreter) VisitLogicalExpr(e *ast.Logical) any {
+	left := i.evaluate(e.Left)
+
+	switch e.Operator.Type {
+	case token.OR:
+		if truthy(left) {
+			return left
+		}
+	case token.AND:
+		if !truthy(left) {
+			return left
+		}
+	default:
+		i.fail(e.Operator, "Unsupported logical operator.")
+	}
+
+	return i.evaluate(e.Right)
+}
+
 func (i *Interpreter) VisitUnaryExpr(e *ast.Unary) any {
 	right := i.evaluate(e.Right)
 
@@ -213,6 +232,15 @@ func (i *Interpreter) VisitExpressionStmt(stmt *ast.Expression) any {
 	return nil
 }
 
+func (i *Interpreter) VisitIfStmt(stmt *ast.If) any {
+	if truthy(i.evaluate(stmt.Condition)) {
+		i.execute(stmt.ThenBranch)
+	} else if stmt.ElseBranch != nil {
+		i.execute(stmt.ElseBranch)
+	}
+	return nil
+}
+
 func (i *Interpreter) VisitPrintStmt(stmt *ast.Print) any {
 	value := i.evaluate(stmt.Expression)
 	fmt.Fprintln(i.out, ast.Stringify(value))
@@ -225,6 +253,13 @@ func (i *Interpreter) VisitVarStmt(stmt *ast.Var) any {
 		value = i.evaluate(stmt.Initializer)
 	}
 	i.environment.Define(stmt.Name.Lexeme, value)
+	return nil
+}
+
+func (i *Interpreter) VisitWhileStmt(stmt *ast.While) any {
+	for truthy(i.evaluate(stmt.Condition)) {
+		i.execute(stmt.Body)
+	}
 	return nil
 }
 

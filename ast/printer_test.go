@@ -94,6 +94,15 @@ func TestPrinter(t *testing.T) {
 			"(+ 1 2)",
 		},
 		{
+			"logical expression",
+			&ast.Logical{
+				Left:     &ast.Literal{Value: false},
+				Operator: op(token.OR, "or"),
+				Right:    &ast.Literal{Value: true},
+			},
+			"(or false true)",
+		},
+		{
 			"comparison",
 			binary(num(1), token.LESS_EQUAL, "<=", num(2)),
 			"(<= 1 2)",

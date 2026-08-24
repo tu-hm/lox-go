@@ -181,6 +181,11 @@ func TestUnsupportedOperatorsReturnRuntimeErrors(t *testing.T) {
 			Operator: token.Token{Type: token.COMMA, Lexeme: ",", Line: 4},
 			Right:    &ast.Literal{Value: 2.0},
 		}, message: "Unsupported binary operator.", line: 4},
+		{expr: &ast.Logical{
+			Left:     &ast.Literal{Value: true},
+			Operator: token.Token{Type: token.COMMA, Lexeme: ",", Line: 5},
+			Right:    &ast.Literal{Value: false},
+		}, message: "Unsupported logical operator.", line: 5},
 	}
 
 	for _, tt := range tests {
@@ -291,5 +296,77 @@ func TestRuntimeErrorRestoresBlockEnvironment(t *testing.T) {
 	var runtimeErr *loxerrors.RuntimeError
 	if !stderrors.As(err, &runtimeErr) || runtimeErr.Token.Lexeme != "local" {
 		t.Fatalf("after block failure got %v, want undefined local", err)
+	}
+}
+
+func TestLogicalOperatorsShortCircuitAndReturnOperands(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		var side = "clean";
+		print "left" or (side = "or-ran");
+		print nil or "right";
+		print false and (side = "and-ran");
+		print true and "right";
+		print side;
+		print true or missing;
+		print false and missing;
+	`)
+
+	if err := interp.Execute(program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got, want := out.String(), "left\nright\nfalse\nright\nclean\ntrue\nfalse\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func TestIfAndWhileControlExecution(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		if (true) print "then"; else print missing;
+		if (nil) print missing; else print "else";
+		if (0) print "zero is truthy";
+		var i = 0;
+		while (i < 3) {
+			print i;
+			i = i + 1;
+		}
+	`)
+
+	if err := interp.Execute(program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got, want := out.String(), "then\nelse\nzero is truthy\n0\n1\n2\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func TestForDesugaringExecutionAndInitializerScope(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		var sum = 0;
+		for (var i = 1; i <= 3; i = i + 1) sum = sum + i;
+		print sum;
+		var j = 0;
+		for (; j < 2;) {
+			print j;
+			j = j + 1;
+		}
+	`)
+
+	if err := interp.Execute(program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got, want := out.String(), "6\n0\n1\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+
+	err := interp.Execute(parseProgram(t, "print i;"))
+	var runtimeErr *loxerrors.RuntimeError
+	if !stderrors.As(err, &runtimeErr) || runtimeErr.Token.Lexeme != "i" {
+		t.Fatalf("loop initializer leaked out of its scope: %v", err)
 	}
 }

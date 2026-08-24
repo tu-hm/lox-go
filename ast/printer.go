@@ -33,6 +33,10 @@ func (p *Printer) VisitGroupingExpr(e *Grouping) any {
 	return p.parenthesize("group", e.Expression)
 }
 
+func (p *Printer) VisitLogicalExpr(e *Logical) any {
+	return p.parenthesize(e.Operator.Lexeme, e.Left, e.Right)
+}
+
 func (p *Printer) VisitUnaryExpr(e *Unary) any {
 	return p.parenthesize(e.Operator.Lexeme, e.Right)
 }

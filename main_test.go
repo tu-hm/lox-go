@@ -24,12 +24,15 @@ func TestRunSourceReusesInterpreterAcrossReplLines(t *testing.T) {
 
 func TestBareExpressionDetectionIsReplOnlySyntaxChoice(t *testing.T) {
 	for source, want := range map[string]bool{
-		"1 + 2":        true,
-		"a = 3":        true,
-		"1 + 2;":       false,
-		"print 1;":     false,
-		"var a = 1;":   false,
-		"{ print 1; }": false,
+		"1 + 2":            true,
+		"a = 3":            true,
+		"1 + 2;":           false,
+		"print 1;":         false,
+		"var a = 1;":       false,
+		"{ print 1; }":     false,
+		"if (true) {}":     false,
+		"while (false) {}": false,
+		"for (;;) {}":      false,
 	} {
 		if got := isBareExpression(lexer.Lex(source)); got != want {
 			t.Errorf("isBareExpression(%q) = %t, want %t", source, got, want)

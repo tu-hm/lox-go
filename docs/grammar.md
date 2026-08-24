@@ -2,7 +2,7 @@
 
 Canonical copy of the grammar. Every chapter from here to the end of the book
 edits this file — chapter 6 rewrites the `expression` rule into a precedence
-ladder, chapter 8 adds statements.
+ladder, chapter 8 adds statements, and chapter 9 adds control flow.
 
 ## Chapter 5 — expressions (ambiguous)
 
@@ -75,6 +75,45 @@ shape first, then validates the left expression as a variable. That one-token
 lookahead technique is what lets later chapters add property assignment without
 backtracking.
 
+## Chapter 9 — control flow
+
+Chapter 9 adds conditional execution, short-circuiting logical expressions,
+and loops. `for` is syntax sugar: parsing lowers it into the existing `Block`,
+`While`, and `Expression` statement nodes instead of creating a `For` node.
+
+```
+program        → declaration* EOF ;
+declaration    → varDecl | statement ;
+statement      → exprStmt | forStmt | ifStmt | printStmt | whileStmt | block ;
+block          → "{" declaration* "}" ;
+varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
+ifStmt         → "if" "(" expression ")" statement
+                 ( "else" statement )? ;
+whileStmt      → "while" "(" expression ")" statement ;
+forStmt        → "for" "(" ( varDecl | exprStmt | ";" )
+                 expression? ";" expression? ")" statement ;
+printStmt      → "print" expression ";" ;
+exprStmt       → expression ";" ;
+
+expression     → assignment ;
+assignment     → IDENTIFIER "=" assignment | logic_or ;
+logic_or       → logic_and ( "or" logic_and )* ;
+logic_and      → equality ( "and" equality )* ;
+equality       → comparison ( ( "!=" | "==" ) comparison )* ;
+comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+term           → factor ( ( "-" | "+" ) factor )* ;
+factor         → unary ( ( "/" | "*" ) unary )* ;
+unary          → ( "!" | "-" ) unary | primary ;
+primary        → NUMBER | STRING | "true" | "false" | "nil"
+               | "(" expression ")" | IDENTIFIER ;
+```
+
+The recursive-descent parser consumes an optional `else` before returning from
+`ifStatement`, so an `else` binds to the nearest preceding unmatched `if`.
+The three optional `for` clauses become an optional outer initializer block, a
+`While` whose missing condition defaults to `true`, and an optional increment
+expression appended to the loop body.
+
 ## The LL(k) form — what the table-driven parser reads
 
 `parser/llk` parses the same language from the same grammar written differently,
@@ -140,6 +179,25 @@ production, before the recursive tail — see
 This grammar is LL(1), so `llk.DefaultK` is 1; `-k=2` and `-k=3` parse it too,
 since every LL(1) grammar is LL(k) for larger k.
 
+Chapter 9 inserts two more factored expression levels:
+
+```
+assignment     → logic_or assignmentTail ;
+logic_or       → logic_and logic_orTail ;
+logic_orTail   → "or" logic_and logic_orTail | ε ;
+logic_and      → equality logic_andTail ;
+logic_andTail  → "and" equality logic_andTail | ε ;
+```
+
+Those productions remain LL(1) and build `Logical` nodes before recurring into
+their tails, preserving left associativity. Compound statements are
+orchestrated in `parser/llk/parser.go`, just as recoverable blocks already were.
+This is especially important for `if`: the usual optional-`else` grammar has a
+dangling-`else` prediction conflict, while eager recursive statement parsing
+binds `else` to the nearest `if` without weakening the table's conflict checks.
+Nested expression runs mask lookahead after their closing `)` or `;`, so the
+same logic works for every supported `k`.
+
 ## Notation
 
 - `→` separates a rule head from its body; `;` ends the rule.
@@ -157,12 +215,15 @@ since every LL(1) grammar is LL(k) for larger k.
 | `binary` | `Binary` | `Left Expr`, `Operator token.Token`, `Right Expr` |
 | `grouping` | `Grouping` | `Expression Expr` |
 | `literal` | `Literal` | `Value any` |
+| logical operator | `Logical` | `Left Expr`, `Operator token.Token`, `Right Expr` |
 | `unary` | `Unary` | `Operator token.Token`, `Right Expr` |
 | variable access | `Variable` | `Name token.Token` |
 | block | `Block` | `Statements []Stmt` |
 | expression statement | `Expression` | `Expression Expr` |
+| if statement | `If` | `Condition Expr`, `ThenBranch Stmt`, `ElseBranch Stmt` |
 | print statement | `Print` | `Expression Expr` |
 | variable declaration | `Var` | `Name token.Token`, `Initializer Expr` |
+| while statement | `While` | `Condition Expr`, `Body Stmt` |
 
 `operator` gets no node — the token already carries which operator it is. That
 is the "abstract" in abstract syntax tree: only what the interpreter needs

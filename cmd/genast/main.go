@@ -80,6 +80,15 @@ var exprs = hierarchy{
 			Fields: []field{{"Value", "any"}},
 		},
 		{
+			Name: "Logical",
+			Doc:  "Logical is a short-circuiting and/or operation: Left Operator Right.",
+			Fields: []field{
+				{"Left", "Expr"},
+				{"Operator", "token.Token"},
+				{"Right", "Expr"},
+			},
+		},
+		{
 			Name: "Unary",
 			Doc:  "Unary is a prefix operation: Operator Right.",
 			Fields: []field{
@@ -110,6 +119,15 @@ var stmts = hierarchy{
 			Fields: []field{{"Expression", "Expr"}},
 		},
 		{
+			Name: "If",
+			Doc:  "If executes ThenBranch when Condition is truthy, otherwise ElseBranch when present.",
+			Fields: []field{
+				{"Condition", "Expr"},
+				{"ThenBranch", "Stmt"},
+				{"ElseBranch", "Stmt"},
+			},
+		},
+		{
 			Name:   "Print",
 			Doc:    "Print evaluates Expression and writes its Lox representation.",
 			Fields: []field{{"Expression", "Expr"}},
@@ -120,6 +138,14 @@ var stmts = hierarchy{
 			Fields: []field{
 				{"Name", "token.Token"},
 				{"Initializer", "Expr"},
+			},
+		},
+		{
+			Name: "While",
+			Doc:  "While repeatedly executes Body while Condition remains truthy.",
+			Fields: []field{
+				{"Condition", "Expr"},
+				{"Body", "Stmt"},
 			},
 		},
 	},

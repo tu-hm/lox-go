@@ -599,3 +599,64 @@ func TestParseProgramInvalidAssignmentTarget(t *testing.T) {
 		t.Errorf("recovered as %v, want [(print 4)]", got)
 	}
 }
+
+func TestLogicalPrecedenceForEveryK(t *testing.T) {
+	defer errors.Reset()
+
+	for k := MinK; k <= MaxK; k++ {
+		expr, err := parserFor(t, "false or true and false", k).Parse()
+		if err != nil {
+			t.Fatalf("k=%d: %v", k, err)
+		}
+		if got, want := (&ast.Printer{}).Print(expr), "(or false (and true false))"; got != want {
+			t.Errorf("k=%d: got %s, want %s", k, got, want)
+		}
+	}
+}
+
+func TestControlFlowForEveryK(t *testing.T) {
+	defer errors.Reset()
+
+	tests := []struct {
+		source string
+		want   string
+	}{
+		{
+			"if (true) if (false) print 1; else print 2;",
+			"(if true (if false (print 1) (print 2)))",
+		},
+		{
+			"if ((true and false) or true) print 1; else print 2;",
+			"(if (or (group (and true false)) true) (print 1) (print 2))",
+		},
+		{
+			"while (i < 3) i = i + 1;",
+			"(while (< i 3) (expr (= i (+ i 1))))",
+		},
+		{
+			"for (var i = 0; i < 3; i = i + 1) print i;",
+			"(block (var i 0) (while (< i 3) (block (print i) (expr (= i (+ i 1))))))",
+		},
+		{
+			"for (;;) print 1;",
+			"(while true (print 1))",
+		},
+		{
+			"for (i = 0; i < 2;) print i;",
+			"(block (expr (= i 0)) (while (< i 2) (print i)))",
+		},
+	}
+
+	for k := MinK; k <= MaxK; k++ {
+		for _, tt := range tests {
+			statements, errs := parserFor(t, tt.source, k).ParseProgram()
+			if len(errs) != 0 {
+				t.Fatalf("k=%d ParseProgram(%q): %v", k, tt.source, errs)
+			}
+			got := renderProgram(statements)
+			if len(got) != 1 || got[0] != tt.want {
+				t.Errorf("k=%d ParseProgram(%q) = %v, want [%s]", k, tt.source, got, tt.want)
+			}
+		}
+	}
+}

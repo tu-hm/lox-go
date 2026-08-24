@@ -17,8 +17,10 @@ type Stmt interface {
 type StmtVisitor interface {
 	VisitBlockStmt(e *Block) any
 	VisitExpressionStmt(e *Expression) any
+	VisitIfStmt(e *If) any
 	VisitPrintStmt(e *Print) any
 	VisitVarStmt(e *Var) any
+	VisitWhileStmt(e *While) any
 }
 
 // Block executes Statements in a nested lexical scope.
@@ -37,6 +39,16 @@ type Expression struct {
 func (e *Expression) Accept(v StmtVisitor) any { return v.VisitExpressionStmt(e) }
 func (e *Expression) isStmt()                  {}
 
+// If executes ThenBranch when Condition is truthy, otherwise ElseBranch when present.
+type If struct {
+	Condition  Expr
+	ThenBranch Stmt
+	ElseBranch Stmt
+}
+
+func (e *If) Accept(v StmtVisitor) any { return v.VisitIfStmt(e) }
+func (e *If) isStmt()                  {}
+
 // Print evaluates Expression and writes its Lox representation.
 type Print struct {
 	Expression Expr
@@ -53,3 +65,12 @@ type Var struct {
 
 func (e *Var) Accept(v StmtVisitor) any { return v.VisitVarStmt(e) }
 func (e *Var) isStmt()                  {}
+
+// While repeatedly executes Body while Condition remains truthy.
+type While struct {
+	Condition Expr
+	Body      Stmt
+}
+
+func (e *While) Accept(v StmtVisitor) any { return v.VisitWhileStmt(e) }
+func (e *While) isStmt()                  {}

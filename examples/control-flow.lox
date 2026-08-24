@@ -1,0 +1,19 @@
+var sideEffect = "not evaluated";
+print "left operand" or (sideEffect = "evaluated");
+print sideEffect;
+
+if (sideEffect == "not evaluated") {
+  print "short-circuiting works";
+} else {
+  print "unexpected side effect";
+}
+
+var countdown = 3;
+while (countdown > 0) {
+  print countdown;
+  countdown = countdown - 1;
+}
+
+for (var i = 0; i < 3; i = i + 1) {
+  print i;
+}

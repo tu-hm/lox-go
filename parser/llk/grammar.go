@@ -146,6 +146,8 @@ const (
 	nExpression     = "expression"
 	nAssignment     = "assignment"
 	nAssignmentTail = "assignmentTail"
+	nOr             = "or"
+	nAnd            = "and"
 )
 
 const (
@@ -154,9 +156,10 @@ const (
 	expectStmt = "Expect a statement."
 )
 
-// loxGrammar is the chapter 8 program grammar and precedence ladder in LL
-// form. Two rewrites turn the recursive-descent expression grammar into this
-// one:
+// loxGrammar is the core program grammar and chapter 9 precedence ladder in LL
+// form. Recoverable blocks and compound control statements are orchestrated in
+// parser.go; their leaf statements and all expressions still run here. Two
+// rewrites turn the recursive-descent expression grammar into this one:
 //
 //	term → term ( "-" | "+" ) factor        left recursion — an LL parser
 //	                                        would recurse forever on it
@@ -221,7 +224,7 @@ func loxGrammar() *grammar {
 	// Factoring the optional assignment tail keeps the grammar LL(1). The
 	// semantic action validates the already-parsed left side as an l-value.
 	g.add(nExpression, nt(nAssignment))
-	g.add(nAssignment, nt("equality"), nt(nAssignmentTail))
+	g.add(nAssignment, nt(nOr), nt(nAssignmentTail))
 	g.add(nAssignmentTail,
 		term(token.EQUAL, ""),
 		nt(nAssignment),
@@ -229,6 +232,8 @@ func loxGrammar() *grammar {
 	)
 	g.add(nAssignmentTail) // ε
 
+	logicalLevel(g, nOr, nAnd, token.OR)
+	logicalLevel(g, nAnd, "equality", token.AND)
 	level(g, "equality", "comparison", token.BANG_EQUAL, token.EQUAL_EQUAL)
 	level(g, "comparison", "term", token.GREATER, token.GREATER_EQUAL, token.LESS, token.LESS_EQUAL)
 	level(g, "term", "factor", token.MINUS, token.PLUS)
@@ -253,7 +258,7 @@ func loxGrammar() *grammar {
 		act(mkGrouping),
 	)
 
-	for _, name := range []string{nExpression, nAssignment, "equality", "comparison", "term", "factor", "unary", "primary"} {
+	for _, name := range []string{nExpression, nAssignment, nOr, nAnd, "equality", "comparison", "term", "factor", "unary", "primary"} {
 		g.fail[name] = expectExpr
 	}
 	g.fail[nProgram] = expectStmt
@@ -286,11 +291,19 @@ func loxGrammar() *grammar {
 // Put the action after the recursion instead and the folds happen inside out,
 // which is right-associativity and the wrong answer for arithmetic.
 func level(g *grammar, name, next string, ops ...token.TokenType) {
+	levelWith(g, name, next, mkBinary, ops...)
+}
+
+func logicalLevel(g *grammar, name, next string, ops ...token.TokenType) {
+	levelWith(g, name, next, mkLogical, ops...)
+}
+
+func levelWith(g *grammar, name, next string, fold action, ops ...token.TokenType) {
 	tail := name + "Tail"
 
 	g.add(name, nt(next), nt(tail))
 	for _, op := range ops {
-		g.add(tail, term(op, ""), nt(next), act(mkBinary), nt(tail))
+		g.add(tail, term(op, ""), nt(next), act(fold), nt(tail))
 	}
 	g.add(tail) // ε
 
@@ -359,6 +372,14 @@ func mkBinary(s *stack) error {
 	op := s.token()
 	left := s.expr()
 	s.push(&ast.Binary{Left: left, Operator: op, Right: right})
+	return nil
+}
+
+func mkLogical(s *stack) error {
+	right := s.expr()
+	op := s.token()
+	left := s.expr()
+	s.push(&ast.Logical{Left: left, Operator: op, Right: right})
 	return nil
 }
 

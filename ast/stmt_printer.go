@@ -47,6 +47,14 @@ func (p *StmtPrinter) VisitExpressionStmt(stmt *Expression) any {
 	return "(expr " + p.expressions.Print(stmt.Expression) + ")"
 }
 
+func (p *StmtPrinter) VisitIfStmt(stmt *If) any {
+	printed := "(if " + p.expressions.Print(stmt.Condition) + " " + p.Print(stmt.ThenBranch)
+	if stmt.ElseBranch != nil {
+		printed += " " + p.Print(stmt.ElseBranch)
+	}
+	return printed + ")"
+}
+
 func (p *StmtPrinter) VisitPrintStmt(stmt *Print) any {
 	return "(print " + p.expressions.Print(stmt.Expression) + ")"
 }
@@ -56,4 +64,8 @@ func (p *StmtPrinter) VisitVarStmt(stmt *Var) any {
 		return "(var " + stmt.Name.Lexeme + ")"
 	}
 	return "(var " + stmt.Name.Lexeme + " " + p.expressions.Print(stmt.Initializer) + ")"
+}
+
+func (p *StmtPrinter) VisitWhileStmt(stmt *While) any {
+	return "(while " + p.expressions.Print(stmt.Condition) + " " + p.Print(stmt.Body) + ")"
 }
