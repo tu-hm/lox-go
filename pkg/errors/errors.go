@@ -7,7 +7,10 @@ import (
 	"compiler101/lexer/token"
 )
 
-var HadError bool
+var (
+	HadError        bool
+	HadRuntimeError bool
+)
 
 // Reset clears the error state. The REPL calls it between lines so one bad
 // line doesn't kill the session; tests call it so they don't see each other's
@@ -15,6 +18,7 @@ var HadError bool
 // t.Parallel().
 func Reset() {
 	HadError = false
+	HadRuntimeError = false
 }
 
 func Error(line int, message string) {
@@ -60,4 +64,22 @@ func (e *ParseError) Error() string {
 func ParseErrorAt(t token.Token, message string) error {
 	ErrorToken(t, message)
 	return &ParseError{Token: t, Message: message}
+}
+
+// RuntimeError is a failure discovered while evaluating an expression. Token
+// identifies the operator that failed so callers can report the source line.
+type RuntimeError struct {
+	Token   token.Token
+	Message string
+}
+
+func (e *RuntimeError) Error() string {
+	return fmt.Sprintf("line %d, at %q: %s", e.Token.Line, e.Token.Lexeme, e.Message)
+}
+
+// ReportRuntimeError prints a runtime error and records it separately from a
+// syntax error because the command-line exit codes differ.
+func ReportRuntimeError(e *RuntimeError) {
+	fmt.Fprintf(os.Stderr, "%s\n[line %d]\n", e.Message, e.Token.Line)
+	HadRuntimeError = true
 }

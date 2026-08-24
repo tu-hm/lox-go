@@ -1,0 +1,19 @@
+// Arithmetic respects precedence and grouping.
+1 + 2 * 3;
+(1 + 2) * 3;
+7 / 2;
+
+// Plus concatenates two strings.
+"hello, " + "Lox!";
+
+// Only false and nil are falsey; zero and an empty string are truthy.
+!nil;
+!false;
+!0;
+!"";
+
+// Comparisons and equality produce booleans.
+1 < 2;
+2 <= 2;
+nil == nil;
+1 != "1";

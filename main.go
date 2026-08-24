@@ -2,11 +2,13 @@ package main
 
 import (
 	"bufio"
+	goerrors "errors"
 	"flag"
 	"fmt"
 	"os"
 
 	"compiler101/ast"
+	"compiler101/interpreter"
 	"compiler101/lexer"
 	"compiler101/lexer/token"
 	"compiler101/parser"
@@ -19,6 +21,7 @@ import (
 type options struct {
 	parser parser.Config
 	tokens bool // stop after the scanner and dump the token stream
+	show   string
 }
 
 func Run(source string, opt options) {
@@ -37,6 +40,7 @@ func Run(source string, opt options) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(64) // EX_USAGE
 	}
+	interp := interpreter.New()
 
 	// A ';' means the source is a batch of statements, so parse it as one and
 	// report every error it contains. Without one it is a single expression —
@@ -44,7 +48,10 @@ func Run(source string, opt options) {
 	if containsSemicolon(tokens) {
 		exprs, _ := p.ParseAll()
 		for _, expr := range exprs {
-			fmt.Println((&ast.Printer{}).Print(expr))
+			emit(interp, expr, opt.show)
+			if errors.HadRuntimeError {
+				break
+			}
 		}
 		return
 	}
@@ -53,7 +60,26 @@ func Run(source string, opt options) {
 	if err != nil {
 		return // already reported through pkg/errors
 	}
-	fmt.Println((&ast.Printer{}).Print(expr))
+	emit(interp, expr, opt.show)
+}
+
+// emit prints one parsed expression using the requested view. Evaluation is
+// the default; AST and RPN output remain available for debugging the parser.
+func emit(interp *interpreter.Interpreter, expr ast.Expr, show string) {
+	switch show {
+	case "ast":
+		fmt.Println((&ast.Printer{}).Print(expr))
+	case "rpn":
+		fmt.Println((&ast.RPNPrinter{}).Print(expr))
+	default:
+		value, err := interp.Interpret(expr)
+		var rte *errors.RuntimeError
+		if goerrors.As(err, &rte) {
+			errors.ReportRuntimeError(rte)
+			return
+		}
+		fmt.Println(ast.Stringify(value))
+	}
 }
 
 func containsSemicolon(tokens []token.Token) bool {
@@ -76,6 +102,9 @@ func RunFile(path string, opt options) {
 
 	if errors.HadError {
 		os.Exit(65) // EX_DATAERR
+	}
+	if errors.HadRuntimeError {
+		os.Exit(70) // EX_SOFTWARE
 	}
 }
 
@@ -119,13 +148,14 @@ func printSampleAST() {
 }
 
 func main() {
-	showAST := flag.Bool("ast", false, "print a hand-built sample AST and exit")
+	showSample := flag.Bool("sample", false, "print a hand-built sample AST and exit")
 	showTokens := flag.Bool("tokens", false, "print the token stream instead of parsing")
+	show := flag.String("print", "eval", "what to print: eval, ast, or rpn")
 	algorithm := flag.String("parser", "rd", "parsing algorithm: rd (recursive descent) or llk (table-driven LL(k))")
 	k := flag.Int("k", 0, fmt.Sprintf("lookahead for -parser=llk, %d..%d (default %d)", llk.MinK, llk.MaxK, llk.DefaultK))
 	flag.Parse()
 
-	if *showAST {
+	if *showSample {
 		printSampleAST()
 		return
 	}
@@ -138,6 +168,7 @@ func main() {
 	opt := options{
 		parser: parser.Config{Kind: kind, K: *k},
 		tokens: *showTokens,
+		show:   *show,
 	}
 
 	// flag.Args() is os.Args with the program name and any flags removed.
@@ -145,7 +176,7 @@ func main() {
 
 	switch {
 	case len(args) > 1:
-		fmt.Fprintln(os.Stderr, "Usage: glox [-parser=rd|llk] [-k=n] [script]")
+		fmt.Fprintln(os.Stderr, "Usage: glox [-parser=rd|llk] [-k=n] [-print=eval|ast|rpn] [script]")
 		os.Exit(64) // EX_USAGE
 	case len(args) == 1:
 		RunFile(args[0], opt)
