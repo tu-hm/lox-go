@@ -175,6 +175,10 @@ Can't read local variable in its own initializer.  a name inside its own varDecl
 Can't return from top-level code.                  returnStmt outside a function body
 ```
 
+The same pass answers one more question the notation cannot ask — whether
+anything ever reads a local — and reports that as a warning rather than an error,
+because an unused variable cannot make a program behave wrongly.
+
 Each is checked over the tree, not the token stream, which is why both front ends
 get them for free. See [Chapter 11 — resolving and binding](11-resolving-and-binding.md).
 

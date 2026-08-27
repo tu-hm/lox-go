@@ -15,7 +15,8 @@ By the end, you should be able to:
 5. Pair every resolver scope with the runtime environment it predicts.
 6. Explain why the global scope is not on the resolver's scope stack.
 7. Explain why the locals table is keyed by node identity, and what that costs.
-8. Say what the pass does and does not make faster.
+8. Say what the pass does and does not make faster, and measure it.
+9. Explain why an unused local is a warning here and a redeclared one is an error.
 
 Use this command prefix in the current environment:
 
@@ -130,7 +131,47 @@ exactly that — and explain the failure.
 Checkpoint: `GetAt` has no not-found branch and `Get` does. Which one is the
 special case, and why?
 
-## Session 6 — Confirm both front ends and the REPL
+## Session 6 — Read the two extensions
+
+Both code challenges are implemented, so this session reads rather than writes.
+
+Read `binding`, `scope`, `endScope`, and `resolveLocal` in
+[`resolver/resolver.go`](../resolver/resolver.go), then `Define`, `GetAt`, and
+`AssignAt` in [`interpreter/environment.go`](../interpreter/environment.go).
+
+Predict the diagnostics, then check:
+
+```lox
+{ var written = 0; written = 1; }
+fun f(ignored) { return 1; } print f(1);
+{ fun helper() { return 1; } }
+{ var a = 1; fun show() { print a; } show(); }
+```
+
+Then work out the slot number of every local in this program, and the
+`(distance, index)` pair for every use:
+
+```lox
+{
+  var first = "1";
+  var second = "2";
+  fun swap() { var carried = first; first = second; second = carried; }
+  swap();
+}
+```
+
+Run the benchmarks, and account for the memory number being the one that moved
+most:
+
+```sh
+env GOTOOLCHAIN=go1.26.6 GOCACHE=/private/tmp/compiler101-gocache \
+  go test ./interpreter -run '^$' -bench . -benchmem -count 10
+```
+
+Checkpoint: `Define` appends in a local environment. What property of Lox
+declarations makes that safe, and which single language feature would break it?
+
+## Session 7 — Confirm both front ends and the REPL
 
 ```sh
 env GOTOOLCHAIN=go1.26.6 go run . examples/resolving-and-binding.lox
@@ -152,12 +193,23 @@ for `for` loops. Which earlier design decision bought that, in each case?
 
 ## Challenges
 
-1. Answer in prose: the resolver defines a function's own name before resolving
-   its body. Why is that safe, when defining a variable before its initializer
-   is resolved is not?
-2. Report an unused local variable. The scope maps become small structs — name
-   token, defined, used — and `endScope` reports what was never read. Decide
-   what to do about parameters, and about a variable used only for assignment.
-3. Resolve to a `(distance, slot)` pair and back environments with a slice
-   instead of a map. Measure it with a `fib` benchmark before and after. Worth
-   deferring until after Chapter 12.
+1. **Open.** Answer in prose: the resolver defines a function's own name before
+   resolving its body. Why is that safe, when defining a variable before its
+   initializer is resolved is not?
+2. **Implemented** — unused locals, reported as warnings. See
+   [the chapter notes](11-resolving-and-binding.md#unused-locals-challenge-2)
+   for the two open decisions it had to make: whether a write counts as a use
+   (no, as in Go), and whether parameters are checked (no). Worth arguing with:
+   the challenge says to report an error, and this reports a warning.
+3. **Implemented** — `(distance, index)` pairs and slice-backed local
+   environments, at roughly −25% time and −54% memory. See
+   [the chapter notes](11-resolving-and-binding.md#slots-instead-of-names-challenge-3).
+
+Two extensions neither challenge asks for, if you want more:
+
+- Report an unused local that is only read by itself — the recursive-function
+  case `TestUnusedCheckIsSatisfiedBySelfReference` leaves open. Reachability
+  from used names, rather than "was it read", is the analysis you need.
+- Pre-size a call environment's slice from the resolver's scope size, so a call
+  frame allocates once regardless of how many locals the body declares. It needs
+  the scope size on the `ast.Function` node, which means touching the generator.

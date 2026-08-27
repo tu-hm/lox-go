@@ -4,11 +4,12 @@ Implementation of
 [Resolving and Binding](https://craftinginterpreters.com/resolving-and-binding.html)
 for this repository's tree-walking interpreter.
 
-> Status: implemented. A static resolution pass runs between parsing and
-> execution. Every local variable use is bound to a declaration by scope
-> distance, closures no longer observe declarations that appear after them, and
-> three static errors are reported before the program runs. The grammar and both
-> parser front ends are unchanged.
+> Status: implemented, including both code challenges. A static resolution pass
+> runs between parsing and execution. Every local variable use is bound to a
+> declaration by scope distance and slot index, closures no longer observe
+> declarations that appear after them, three static errors are refused before the
+> program runs, and locals nobody reads are reported as warnings. The grammar and
+> both parser front ends are unchanged.
 
 For a guided walkthrough, follow the [Chapter 11 learning plan](11-learning-plan.md).
 
@@ -103,17 +104,58 @@ pass. `main.go` refuses to execute a program that produced any, which reaches
 the user as exit code 65 — the same as a syntax error, because in both cases
 nothing ran.
 
+## Unused locals (challenge 2)
+
+A scope keeps a `binding` per name rather than a bare bool: the name token, what
+it was declared as, whether its initializer finished, and whether anything reads
+it. `endScope` reports the names nobody read, because once a scope closes
+nothing outside it can name them — which is what makes this a static question at
+all.
+
+```
+[line 17] Warning at 'a': Local variable 'a' is never used.
+```
+
+Two decisions the book leaves open:
+
+- **Assigning to a variable does not count as using it.** `resolveLocal` is told
+  whether the mention is a read or a write, so `{ var a = 0; a = 1; }` is
+  reported. Go draws the line in the same place.
+- **Parameters are exempt.** A parameter's presence is dictated by the caller's
+  signature rather than by the body, and Lox has no way to spell a deliberately
+  unused name — no `_`, no attribute — so a report would be unescapable.
+
+This reports rather than refuses, which is a departure from the challenge as
+worded. An unused local cannot make a program behave wrongly, so refusing to run
+it buys nothing and costs the user a working program. `pkg/errors.Warning`
+exists for exactly that class: it prints, it does not touch `HadError`, and it
+deliberately has no `Error` method so it cannot be returned where an error is
+expected and quietly become fatal. Promoting it to an error is one line — call
+`r.fail` instead of `r.warn` in `endScope`.
+
+Bindings are kept in declaration order as well as by name, so warnings come out
+in source order, innermost scope first. One known limitation, pinned by
+`TestUnusedCheckIsSatisfiedBySelfReference`: a recursive call is a read, so an
+unused recursive local function goes unreported. Answering that properly means
+asking whether a name is reachable from anything that is used, which is a much
+larger analysis.
+
 ## Reading a resolved variable
 
 The interpreter keeps the answers in a side table, `locals`, and asks it before
-touching an environment. A resolved use hops a known number of environments; an
-unresolved one is global by definition, and only that case can still fail at
+touching an environment. A resolved use goes straight to `slot{distance, index}`;
+an unresolved one is global by definition, and only that case can still fail at
 runtime with `Undefined variable`.
 
-`Environment.GetAt` and `AssignAt` have no not-found case. That absence is the
-payoff of the pass rather than an oversight: the resolver proved the name lives
-in that exact scope, so there is nothing to search for and no error to report.
-`Get` and `Assign` remain, used only for globals.
+`Environment.GetAt` and `AssignAt` have no not-found case, no name comparison,
+and no search. That absence is the payoff of the pass rather than an oversight:
+the resolver proved where the value sits. `Get` and `Assign`, which do search by
+name, remain for globals.
+
+An index out of range would mean the resolver and the interpreter disagree about
+the shape of a scope. That is a bug in this interpreter rather than bad Lox, so
+the panic it produces is the right outcome — the same line this repository
+already draws in `TestInterpretDoesNotLaunderUnexpectedPanics`.
 
 The table is keyed by the syntax node itself. Every `ast` node is used through a
 pointer and Go compares pointer keys by identity, which is the same guarantee
@@ -122,6 +164,45 @@ different places stay separate entries. The cost is an invariant — nothing may
 copy a node by value or rebuild the tree between resolution and execution, or
 the recorded entry becomes unreachable and the use silently falls back to
 globals.
+
+## Slots instead of names (challenge 3)
+
+The resolver numbers each scope's declarations in source order, and reports that
+index alongside the distance. A local environment then needs no names at all:
+
+| Scope | Storage | Found by |
+| --- | --- | --- |
+| global | `map[string]any` | name, at runtime |
+| local | `[]any` | `(distance, index)`, computed once |
+
+`Define` appends in a local environment, which is what makes the indices line
+up: the resolver numbered the declarations in source order, and a scope's
+declarations execute in that same order, at most once each. Lox cannot declare a
+variable conditionally — `if (c) var a = 1;` is a syntax error, because `varDecl`
+is a declaration and not a statement — and a redeclared local is now a static
+error, so the n-th `Define` at runtime is always the n-th declaration in the
+text. The one way a scope can run without filling every slot is an early
+`return`, which leaves an unreachable tail; `TestEarlyReturnSkipsLaterSlots`
+covers it.
+
+Dropping the map from local environments is where most of the win comes from —
+not the lookup, but the allocation it takes to make one per call frame:
+
+| Benchmark | Before | After | |
+| --- | --- | --- | --- |
+| `Fib` time | 3.018 ms | 2.490 ms | −17% |
+| `Fib` memory | 3221 KiB | 869 KiB | −73% |
+| `Fib` allocations | 52,750 | 44,388 | −16% |
+| `LocalAccess` time | 80.76 µs | 55.78 µs | −31% |
+| `LocalAccess` memory | 70.7 KiB | 54.8 KiB | −22% |
+| `LocalAccess` allocations | 3,004 | 2,004 | −33% |
+
+Ten runs each on an Apple M5, `p < 0.001` on every row. Reproduce with:
+
+```sh
+env GOTOOLCHAIN=go1.26.6 GOCACHE=/private/tmp/compiler101-gocache \
+  go test ./interpreter -run '^$' -bench . -benchmem -count 10
+```
 
 ## Where the pass sits
 
@@ -148,9 +229,11 @@ parser needed a line of change.
 The suite covers the three static errors and their tokens, the legal bindings
 they must not reject, multiple errors reported in one pass, the motivating
 shadowing program, distances greater than one through nested closures,
-assignment at a distance, front-end parity at `k = 1..3`, REPL survival after a
-static error, and what an unresolved tree does — locals fall back to globals,
-which is why resolution is a required stage and not an optimization.
+assignment at a distance, slot order under rotation and under an early return,
+front-end parity at `k = 1..3`, REPL survival after a static error, unused
+locals — including the write-only case, the exempt parameter, and the source
+ordering of the reports — and what an unresolved tree does: locals fall back to
+globals, which is why resolution is a required stage and not an optimization.
 
 ```sh
 env GOTOOLCHAIN=go1.26.6 GOCACHE=/private/tmp/compiler101-gocache \
@@ -162,7 +245,11 @@ env GOTOOLCHAIN=go1.26.6 go run . -parser=llk -k=3 examples/resolving-and-bindin
 
 ## Scope boundary
 
-The chapter's challenges are not implemented: reporting unused local variables,
-and replacing the map lookups with array slot indices. Both are additive to this
-pass. The slot-index version is better attempted after Chapter 12, which adds
-binding kinds that would otherwise force it to be rewritten.
+Both code challenges are implemented. The remaining challenge is the prose one:
+why is defining a function's own name before resolving its body safe, when
+defining a variable before resolving its initializer is not? See the
+[learning plan](11-learning-plan.md#challenges).
+
+Chapter 12 will add binding kinds — methods, initializers, `this` — to
+`functionType` and to the slots a scope hands out. The `binding` struct and the
+`(distance, index)` pair are the two places that will grow.

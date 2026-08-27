@@ -75,6 +75,10 @@ func (k bindingKind) String() string {
 type binding struct {
 	name token.Token
 	kind bindingKind
+	// slot is this name's index within its own scope, numbered in declaration
+	// order. Together with the scope distance it tells the interpreter exactly
+	// where the value sits, so the runtime never compares a name.
+	slot int
 	// defined reports whether the initializer has finished. Declared-but-not-
 	// defined is exactly what makes "var a = a;" detectable.
 	defined bool
@@ -159,7 +163,7 @@ func (r *Resolver) declare(name token.Token, kind bindingKind) {
 		r.fail(name, "Already a variable with this name in this scope.")
 		return
 	}
-	b := &binding{name: name, kind: kind}
+	b := &binding{name: name, kind: kind, slot: len(current.order)}
 	current.byName[name.Lexeme] = b
 	current.order = append(current.order, b)
 }
@@ -187,7 +191,7 @@ func (r *Resolver) resolveLocal(e ast.Expr, name token.Token, use useKind) {
 		if use == useRead {
 			b.read = true
 		}
-		r.interpreter.Resolve(e, len(r.scopes)-1-depth)
+		r.interpreter.Resolve(e, len(r.scopes)-1-depth, b.slot)
 		return
 	}
 }

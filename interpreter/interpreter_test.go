@@ -606,3 +606,63 @@ func TestUnresolvedLocalFallsBackToGlobals(t *testing.T) {
 		t.Errorf("output = %q, want nothing", out.String())
 	}
 }
+
+// TestSlotIndicesFollowDeclarationOrder exercises the assumption the slice-based
+// environment rests on: the resolver numbers a scope's declarations in source
+// order, and the runtime fills them in that same order.
+func TestSlotIndicesFollowDeclarationOrder(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		{
+			var first = "1";
+			var second = "2";
+			var third = "3";
+
+			fun show() { print third + second + first; }
+			fun rotate() {
+				var carried = first;
+				first = second;
+				second = third;
+				third = carried;
+			}
+
+			show();
+			rotate();
+			show();
+		}
+	`)
+
+	if err := execute(t, interp, program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got, want := out.String(), "321\n132\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+// TestEarlyReturnSkipsLaterSlots covers the one way a scope can run without
+// filling every slot the resolver numbered. Nothing after the return can read
+// them, so the unfilled tail is unreachable rather than wrong.
+func TestEarlyReturnSkipsLaterSlots(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		fun f(early) {
+			var head = "a";
+			if (early) return head;
+			var tail = "b";
+			return head + tail;
+		}
+
+		print f(true);
+		print f(false);
+	`)
+
+	if err := execute(t, interp, program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got, want := out.String(), "a\nab\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}

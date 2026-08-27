@@ -14,17 +14,23 @@ import (
 type Interpreter struct {
 	globals     *Environment
 	environment *Environment
-	// locals is what the resolver hands over: for each variable use, the
-	// number of scopes between that use and the declaration it refers to.
+	// locals is what the resolver hands over: for each variable use, where
+	// the declaration it refers to lives.
+	//
 	// The key is the syntax node itself. Every ast node is used through a
 	// pointer and Go compares pointer keys by identity, which is the same
 	// guarantee the book gets from Java's IdentityHashMap — two textually
 	// identical uses in different places stay distinct entries. Nothing may
 	// copy a node by value or rebuild the tree between resolution and
 	// execution, or the entry recorded here becomes unreachable.
-	locals map[ast.Expr]int
+	locals map[ast.Expr]slot
 	out    io.Writer
 }
+
+// slot is where a resolved variable lives: distance environments up the chain,
+// at index within that environment. Both numbers come from the syntax, so
+// neither costs anything to find at runtime.
+type slot struct{ distance, index int }
 
 var (
 	_ ast.ExprVisitor = (*Interpreter)(nil)
@@ -50,7 +56,7 @@ func NewWithWriter(out io.Writer) *Interpreter {
 	return &Interpreter{
 		globals:     globals,
 		environment: globals,
-		locals:      make(map[ast.Expr]int),
+		locals:      make(map[ast.Expr]slot),
 		out:         out,
 	}
 }
@@ -91,20 +97,21 @@ func (i *Interpreter) execute(stmt ast.Stmt) {
 	stmt.Accept(i)
 }
 
-// Resolve records how many scopes separate one variable use from its
-// declaration. Package resolver owns the analysis; the interpreter only stores
-// the answer and trusts it. Executing a tree that was never resolved is not an
-// error but a different language: every local would be looked up in globals.
-func (i *Interpreter) Resolve(e ast.Expr, depth int) {
-	i.locals[e] = depth
+// Resolve records where one variable use finds its declaration: distance scopes
+// out, at index within that scope. Package resolver owns the analysis; the
+// interpreter only stores the answer and trusts it. Executing a tree that was
+// never resolved is not an error but a different language: every local would be
+// looked up in globals.
+func (i *Interpreter) Resolve(e ast.Expr, distance, index int) {
+	i.locals[e] = slot{distance: distance, index: index}
 }
 
 // lookUpVariable reads a variable use through whichever mechanism applies. A
 // resolved use hops a known number of environments; an unresolved one is by
 // definition global, and only that case can still fail at runtime.
 func (i *Interpreter) lookUpVariable(name token.Token, e ast.Expr) any {
-	if depth, ok := i.locals[e]; ok {
-		return i.environment.GetAt(depth, name.Lexeme)
+	if at, ok := i.locals[e]; ok {
+		return i.environment.GetAt(at.distance, at.index)
 	}
 	value, err := i.globals.Get(name)
 	if err != nil {
@@ -123,8 +130,8 @@ func (i *Interpreter) failWith(err *errors.RuntimeError) {
 
 func (i *Interpreter) VisitAssignExpr(e *ast.Assign) any {
 	value := i.evaluate(e.Value)
-	if depth, ok := i.locals[e]; ok {
-		i.environment.AssignAt(depth, e.Name.Lexeme, value)
+	if at, ok := i.locals[e]; ok {
+		i.environment.AssignAt(at.distance, at.index, value)
 		return value
 	}
 	if err := i.globals.Assign(e.Name, value); err != nil {
