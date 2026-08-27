@@ -17,6 +17,9 @@ var a = "global";
   var a = "block";
   showA();
 }
+// The unused-variable warning on that second a is not a flaw in the example.
+// It is the same pass making the same point from the other side: nothing in the
+// block ever reads the block's a, which is why both calls print "global".
 
 // A distance greater than one: inner reaches past middle, which declares
 // nothing it needs, to the variable two environments up.

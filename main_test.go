@@ -92,3 +92,18 @@ func TestReplSurvivesStaticErrorAndKeepsResolvingLines(t *testing.T) {
 		t.Error("HadError = true, want the good line to resolve cleanly")
 	}
 }
+
+func TestRunSourceRunsDespiteWarnings(t *testing.T) {
+	defer errors.Reset()
+
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	runSource(`{ var unused = 1; print "ran"; }`, options{}, interp, false)
+
+	if got, want := out.String(), "ran\n"; got != want {
+		t.Errorf("output = %q, want %q: a warning must not stop the program", got, want)
+	}
+	if errors.HadError {
+		t.Error("HadError = true, want a warning to leave the exit code alone")
+	}
+}

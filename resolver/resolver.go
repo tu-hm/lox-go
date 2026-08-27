@@ -6,9 +6,9 @@
 // importantly, correct: the answer is fixed by the program text, so a closure
 // cannot be changed later by a declaration that appears after it.
 //
-// The pass also reports the binding rules the grammar cannot express, such as
-// "return" outside a function. Those are static errors: nothing has run yet, so
-// the program is refused rather than interrupted.
+// The pass also reports what it learns along the way: the binding rules the
+// grammar cannot express, as static errors, and locals nobody reads, as
+// warnings.
 package resolver
 
 import (
@@ -19,19 +19,18 @@ import (
 )
 
 // Resolver is one pass over one tree. It is not reusable: the scope stack and
-// the collected errors belong to a single program, which is why the REPL builds
-// a new one per line while keeping the same interpreter.
+// the collected diagnostics belong to a single program, which is why the REPL
+// builds a new one per line while keeping the same interpreter.
 type Resolver struct {
 	interpreter *interpreter.Interpreter
-	// scopes is a stack of block scopes, innermost last. A name maps to
-	// whether its initializer has finished — declared-but-unfinished is
-	// exactly what makes "var a = a;" detectable. The global scope is
+	// scopes is a stack of block scopes, innermost last. The global scope is
 	// deliberately absent: globals stay dynamic, so a script may call a
 	// function declared further down and the REPL may define names one line
 	// at a time.
-	scopes          []map[string]bool
+	scopes          []*scope
 	currentFunction functionType
 	errs            []error
+	warnings        []*errors.Warning
 }
 
 // The compiler checks the two visitor interfaces here, so adding a node type to
@@ -51,14 +50,64 @@ const (
 	functionFunction
 )
 
-// Resolve binds every local variable use in statements into interp and returns
-// the static errors it found. A non-empty result means the program must not be
-// executed. Errors are also reported to the user as they are found, the same
-// way the parser reports syntax errors.
-func Resolve(interp *interpreter.Interpreter, statements []ast.Stmt) []error {
+// bindingKind is what a name was declared as. It only affects diagnostics: how
+// to describe the name, and whether it is exempt from the unused check.
+type bindingKind int
+
+const (
+	bindingVariable bindingKind = iota
+	bindingFunction
+	bindingParameter
+)
+
+func (k bindingKind) String() string {
+	switch k {
+	case bindingFunction:
+		return "function"
+	case bindingParameter:
+		return "parameter"
+	default:
+		return "variable"
+	}
+}
+
+// binding is everything the pass knows about one declared name.
+type binding struct {
+	name token.Token
+	kind bindingKind
+	// defined reports whether the initializer has finished. Declared-but-not-
+	// defined is exactly what makes "var a = a;" detectable.
+	defined bool
+	// read reports whether any expression reads the value. Assigning to a
+	// variable is not reading it, which is what lets the unused check catch a
+	// local that is only ever written.
+	read bool
+}
+
+// scope is one block's worth of declarations, kept both by name for lookup and
+// in declaration order so diagnostics come out in source order.
+type scope struct {
+	byName map[string]*binding
+	order  []*binding
+}
+
+// useKind distinguishes the two ways a variable can be mentioned. Only a read
+// counts against the unused check.
+type useKind int
+
+const (
+	useRead useKind = iota
+	useWrite
+)
+
+// Resolve binds every local variable use in statements into interp. It returns
+// the static errors it found — a non-empty slice means the program must not be
+// executed — and the warnings, which do not. Both are also reported to the user
+// as they are found, the way the parser reports syntax errors.
+func Resolve(interp *interpreter.Interpreter, statements []ast.Stmt) ([]error, []*errors.Warning) {
 	r := &Resolver{interpreter: interp}
 	r.resolveStatements(statements)
-	return r.errs
+	return r.errs, r.warnings
 }
 
 func (r *Resolver) resolveStatements(statements []ast.Stmt) {
@@ -72,28 +121,47 @@ func (r *Resolver) resolveStmt(stmt ast.Stmt) { stmt.Accept(r) }
 func (r *Resolver) resolveExpr(e ast.Expr) { e.Accept(r) }
 
 func (r *Resolver) beginScope() {
-	r.scopes = append(r.scopes, make(map[string]bool))
+	r.scopes = append(r.scopes, &scope{byName: make(map[string]*binding)})
 }
 
+// endScope is where the unused check happens: a name still unread when its
+// scope closes can never be read, because nothing outside the scope can name
+// it. That is the whole reason this is a static question at all.
 func (r *Resolver) endScope() {
+	closing := r.innermost()
 	r.scopes = r.scopes[:len(r.scopes)-1]
+
+	for _, b := range closing.order {
+		// A parameter is exempt: its presence is dictated by the caller's
+		// signature rather than by the body, and Lox has no way to spell
+		// "deliberately unused". Go draws the line in the same place.
+		if b.kind == bindingParameter || b.read {
+			continue
+		}
+		r.warn(b.name, "Local "+b.kind.String()+" '"+b.name.Lexeme+"' is never used.")
+	}
 }
 
-func (r *Resolver) innermost() map[string]bool { return r.scopes[len(r.scopes)-1] }
+func (r *Resolver) innermost() *scope { return r.scopes[len(r.scopes)-1] }
 
 // declare adds name to the innermost scope, marked unfinished. Splitting
 // declaration from definition is what separates the two shadowing cases: "var a
 // = a;" refers to the variable being declared and is an error, while the same
 // text in a nested scope refers to the outer one and is fine.
-func (r *Resolver) declare(name token.Token) {
+func (r *Resolver) declare(name token.Token, kind bindingKind) {
 	if len(r.scopes) == 0 {
 		return // global scope, where Lox deliberately allows redeclaration
 	}
-	scope := r.innermost()
-	if _, declared := scope[name.Lexeme]; declared {
+	current := r.innermost()
+	if _, declared := current.byName[name.Lexeme]; declared {
+		// The first declaration keeps the scope slot. A second one would make
+		// every later diagnostic about this scope report the name twice.
 		r.fail(name, "Already a variable with this name in this scope.")
+		return
 	}
-	scope[name.Lexeme] = false
+	b := &binding{name: name, kind: kind}
+	current.byName[name.Lexeme] = b
+	current.order = append(current.order, b)
 }
 
 // define marks name's initializer finished, making the variable readable.
@@ -101,24 +169,35 @@ func (r *Resolver) define(name token.Token) {
 	if len(r.scopes) == 0 {
 		return
 	}
-	r.innermost()[name.Lexeme] = true
+	if b, declared := r.innermost().byName[name.Lexeme]; declared {
+		b.defined = true
+	}
 }
 
 // resolveLocal walks the scope stack innermost-first and hands the interpreter
 // the hop count. Not finding the name is not an error: that is what "global"
 // means here, and the interpreter falls back to a dynamic lookup which may
 // still fail at runtime.
-func (r *Resolver) resolveLocal(e ast.Expr, name token.Token) {
-	for scope := len(r.scopes) - 1; scope >= 0; scope-- {
-		if _, declared := r.scopes[scope][name.Lexeme]; declared {
-			r.interpreter.Resolve(e, len(r.scopes)-1-scope)
-			return
+func (r *Resolver) resolveLocal(e ast.Expr, name token.Token, use useKind) {
+	for depth := len(r.scopes) - 1; depth >= 0; depth-- {
+		b, declared := r.scopes[depth].byName[name.Lexeme]
+		if !declared {
+			continue
 		}
+		if use == useRead {
+			b.read = true
+		}
+		r.interpreter.Resolve(e, len(r.scopes)-1-depth)
+		return
 	}
 }
 
 func (r *Resolver) fail(t token.Token, message string) {
 	r.errs = append(r.errs, errors.ResolveErrorAt(t, message))
+}
+
+func (r *Resolver) warn(t token.Token, message string) {
+	r.warnings = append(r.warnings, errors.WarnToken(t, message))
 }
 
 func (r *Resolver) VisitBlockStmt(stmt *ast.Block) any {
@@ -129,7 +208,7 @@ func (r *Resolver) VisitBlockStmt(stmt *ast.Block) any {
 }
 
 func (r *Resolver) VisitVarStmt(stmt *ast.Var) any {
-	r.declare(stmt.Name)
+	r.declare(stmt.Name, bindingVariable)
 	if stmt.Initializer != nil {
 		r.resolveExpr(stmt.Initializer)
 	}
@@ -140,7 +219,7 @@ func (r *Resolver) VisitVarStmt(stmt *ast.Var) any {
 // VisitFunctionStmt defines the function's own name before resolving its body,
 // so the body can refer to the function and recurse.
 func (r *Resolver) VisitFunctionStmt(stmt *ast.Function) any {
-	r.declare(stmt.Name)
+	r.declare(stmt.Name, bindingFunction)
 	r.define(stmt.Name)
 	r.resolveFunction(stmt, functionFunction)
 	return nil
@@ -157,7 +236,7 @@ func (r *Resolver) resolveFunction(stmt *ast.Function, kind functionType) {
 
 	r.beginScope()
 	for _, parameter := range stmt.Params {
-		r.declare(parameter)
+		r.declare(parameter, bindingParameter)
 		r.define(parameter)
 	}
 	r.resolveStatements(stmt.Body)
@@ -208,20 +287,20 @@ func (r *Resolver) VisitWhileStmt(stmt *ast.While) any {
 // initializer is being resolved right now.
 func (r *Resolver) VisitVariableExpr(e *ast.Variable) any {
 	if len(r.scopes) > 0 {
-		if defined, declared := r.innermost()[e.Name.Lexeme]; declared && !defined {
+		if b, declared := r.innermost().byName[e.Name.Lexeme]; declared && !b.defined {
 			r.fail(e.Name, "Can't read local variable in its own initializer.")
 		}
 	}
-	r.resolveLocal(e, e.Name)
+	r.resolveLocal(e, e.Name, useRead)
 	return nil
 }
 
 // VisitAssignExpr resolves the assigned value first, then the target. An
-// assignment is a variable use like any other, so it gets its own entry in the
-// interpreter's table.
+// assignment is a variable use like any other as far as binding goes, but it
+// writes rather than reads, so it does not make the variable "used".
 func (r *Resolver) VisitAssignExpr(e *ast.Assign) any {
 	r.resolveExpr(e.Value)
-	r.resolveLocal(e, e.Name)
+	r.resolveLocal(e, e.Name, useWrite)
 	return nil
 }
 

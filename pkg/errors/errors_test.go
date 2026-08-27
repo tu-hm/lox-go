@@ -115,3 +115,45 @@ func TestResolveErrorAtReportsAndReturns(t *testing.T) {
 		t.Errorf("Error() = %q, want %q", got, want)
 	}
 }
+
+func TestWarnTokenReportsWithoutFailingTheRun(t *testing.T) {
+	loxerrors.Reset()
+	t.Cleanup(loxerrors.Reset)
+
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stderr
+	os.Stderr = write
+	defer func() { os.Stderr = original }()
+
+	warning := loxerrors.WarnToken(
+		token.Token{Type: token.IDENTIFIER, Lexeme: "unused", Line: 4},
+		"Local variable 'unused' is never used.",
+	)
+
+	if err := write.Close(); err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = original
+	got, err := io.ReadAll(read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := read.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "[line 4] Warning at 'unused': Local variable 'unused' is never used.\n"
+	if string(got) != want {
+		t.Errorf("stderr = %q, want %q", got, want)
+	}
+	if loxerrors.HadError || loxerrors.HadRuntimeError {
+		t.Errorf("a warning set HadError=%t HadRuntimeError=%t, want both false",
+			loxerrors.HadError, loxerrors.HadRuntimeError)
+	}
+	if got, want := warning.String(), `line 4, at "unused": Local variable 'unused' is never used.`; got != want {
+		t.Errorf("String() = %q, want %q", got, want)
+	}
+}

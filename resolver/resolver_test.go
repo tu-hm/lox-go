@@ -18,7 +18,7 @@ import (
 // resolveSource runs the real pipeline as far as resolution. These tests cannot
 // use t.Parallel(): pkg/errors keeps the had-error flag in a package global, and
 // these tests assert on it.
-func resolveSource(t *testing.T, source string) []error {
+func resolveSource(t *testing.T, source string) ([]error, []*loxerrors.Warning) {
 	t.Helper()
 	statements, parseErrs := parser.New(lexer.Lex(source)).ParseProgram()
 	if len(parseErrs) != 0 {
@@ -72,7 +72,7 @@ func TestResolverReportsStaticErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			loxerrors.Reset()
 
-			errs := resolveSource(t, tt.source)
+			errs, _ := resolveSource(t, tt.source)
 			if len(errs) != 1 {
 				t.Fatalf("errors = %v, want exactly one", errs)
 			}
@@ -112,7 +112,7 @@ func TestResolverAcceptsLegalBindings(t *testing.T) {
 		t.Run(source, func(t *testing.T) {
 			loxerrors.Reset()
 
-			if errs := resolveSource(t, source); len(errs) != 0 {
+			if errs, _ := resolveSource(t, source); len(errs) != 0 {
 				t.Fatalf("errors = %v, want none", errs)
 			}
 			if loxerrors.HadError {
@@ -129,7 +129,7 @@ func TestResolverReportsEveryErrorInOnePass(t *testing.T) {
 	defer loxerrors.Reset()
 	loxerrors.Reset()
 
-	errs := resolveSource(t, `
+	errs, _ := resolveSource(t, `
 		return 1;
 		{
 			var a = 1;
@@ -200,7 +200,7 @@ func TestResolverIsFrontEndAgnostic(t *testing.T) {
 
 			var out bytes.Buffer
 			interp := interpreter.NewWithWriter(&out)
-			if errs := resolver.Resolve(interp, program); len(errs) != 0 {
+			if errs, _ := resolver.Resolve(interp, program); len(errs) != 0 {
 				t.Fatalf("resolve: %v", errs)
 			}
 			if err := interp.Execute(program); err != nil {
@@ -210,5 +210,132 @@ func TestResolverIsFrontEndAgnostic(t *testing.T) {
 				t.Errorf("k=%d output = %q, want %q", config.K, got, want)
 			}
 		})
+	}
+}
+
+func TestResolverWarnsAboutUnusedLocals(t *testing.T) {
+	defer loxerrors.Reset()
+
+	tests := []struct {
+		name   string
+		source string
+		want   []string
+	}{
+		{
+			name:   "declared and never mentioned",
+			source: `{ var unused = 1; }`,
+			want:   []string{"Local variable 'unused' is never used."},
+		},
+		{
+			name: "written but never read: assigning to a variable is not using it",
+			source: `{
+				var counter = 0;
+				counter = 1;
+			}`,
+			want: []string{"Local variable 'counter' is never used."},
+		},
+		{
+			name:   "local function never called",
+			source: `{ fun helper() { return 1; } }`,
+			want:   []string{"Local function 'helper' is never used."},
+		},
+		{
+			name:   "reported in declaration order",
+			source: `{ var first = 1; var second = 2; }`,
+			want: []string{
+				"Local variable 'first' is never used.",
+				"Local variable 'second' is never used.",
+			},
+		},
+		{
+			name:   "inner scopes close first",
+			source: `{ var outerVar = 1; { var innerVar = 2; } }`,
+			want: []string{
+				"Local variable 'innerVar' is never used.",
+				"Local variable 'outerVar' is never used.",
+			},
+		},
+		{
+			name:   "a function body is a scope like any other",
+			source: `fun f() { var dead = 1; return 2; } print f();`,
+			want:   []string{"Local variable 'dead' is never used."},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loxerrors.Reset()
+
+			errs, warnings := resolveSource(t, tt.source)
+			if len(errs) != 0 {
+				t.Fatalf("errors = %v, want none: an unused local does not stop the program", errs)
+			}
+			if len(warnings) != len(tt.want) {
+				t.Fatalf("warnings = %v, want %d", warnings, len(tt.want))
+			}
+			for i, want := range tt.want {
+				if warnings[i].Message != want {
+					t.Errorf("warning %d = %q, want %q", i, warnings[i].Message, want)
+				}
+			}
+			if loxerrors.HadError {
+				t.Error("HadError = true; a warning must not change the exit code")
+			}
+		})
+	}
+}
+
+func TestResolverDoesNotWarnAboutUsedOrExemptNames(t *testing.T) {
+	defer loxerrors.Reset()
+
+	for _, source := range []string{
+		// Read directly.
+		`{ var a = 1; print a; }`,
+		// Read to initialize another local, which is itself read.
+		`{ var a = 1; var b = a; print b; }`,
+		// Written, but the write reads it too.
+		`{ var a = 0; a = a + 1; print a; }`,
+		// Read from a nested function, and the function is called.
+		`{ var a = 1; fun show() { print a; } show(); }`,
+		// A parameter is exempt: the caller's signature dictates it, and Lox
+		// has no way to spell "deliberately unused".
+		`fun f(ignored) { return 1; } print f(1);`,
+		// Globals are not locals. The unused check cannot see them, because
+		// another line of the REPL may still read them.
+		`var neverRead = 1;`,
+		// A loop variable read only by the condition and the increment.
+		`{ var total = 0; for (var i = 0; i < 3; i = i + 1) total = total + 1; print total; }`,
+	} {
+		t.Run(source, func(t *testing.T) {
+			loxerrors.Reset()
+
+			errs, warnings := resolveSource(t, source)
+			if len(errs) != 0 {
+				t.Fatalf("errors = %v, want none", errs)
+			}
+			if len(warnings) != 0 {
+				t.Errorf("warnings = %v, want none", warnings)
+			}
+		})
+	}
+}
+
+// TestUnusedCheckIsSatisfiedBySelfReference documents a limitation rather than a
+// feature. The check asks whether anything reads the name, and a recursive call
+// reads it — so an unused recursive local goes unreported. Answering properly
+// means asking whether the name is reachable from anything that is used, which
+// is a different and much larger analysis.
+func TestUnusedCheckIsSatisfiedBySelfReference(t *testing.T) {
+	defer loxerrors.Reset()
+	loxerrors.Reset()
+
+	_, warnings := resolveSource(t, `{
+		fun countdown(n) {
+			if (n > 0) return countdown(n - 1);
+			return 0;
+		}
+	}`)
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none: the recursive call counts as a read", warnings)
 	}
 }

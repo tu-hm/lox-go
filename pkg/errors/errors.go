@@ -92,6 +92,27 @@ func ResolveErrorAt(t token.Token, message string) error {
 	return &ResolveError{Token: t, Message: message}
 }
 
+// Warning is a diagnostic the program runs despite: worth telling the user
+// about, but not a reason to refuse the program. It deliberately has no Error
+// method, so it cannot be returned where an error is expected and quietly
+// become fatal.
+type Warning struct {
+	Token   token.Token
+	Message string
+}
+
+func (w *Warning) String() string {
+	return fmt.Sprintf("line %d, at %q: %s", w.Token.Line, w.Token.Lexeme, w.Message)
+}
+
+// WarnToken reports t to the user and returns the value the caller collects. It
+// leaves HadError alone on purpose: the exit code says whether the program ran,
+// and a warning does not stop it from running.
+func WarnToken(t token.Token, message string) *Warning {
+	fmt.Fprintf(os.Stderr, "[line %d] Warning at '%s': %s\n", t.Line, t.Lexeme, message)
+	return &Warning{Token: t, Message: message}
+}
+
 // RuntimeError is a failure discovered while evaluating an expression. Token
 // identifies the operator that failed so callers can report the source line.
 type RuntimeError struct {

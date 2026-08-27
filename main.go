@@ -95,8 +95,10 @@ func emitProgram(interp *interpreter.Interpreter, statements []ast.Stmt, show st
 	case "rpn":
 		expressions = &ast.RPNPrinter{}
 	default:
-		if len(resolver.Resolve(interp, statements)) != 0 {
-			return // static errors, already reported through pkg/errors
+		// Warnings are already on stderr and do not stop the program; a
+		// static error does, because nothing has run yet.
+		if errs, _ := resolver.Resolve(interp, statements); len(errs) != 0 {
+			return // already reported through pkg/errors
 		}
 		reportRuntimeError(interp.Execute(statements))
 		return

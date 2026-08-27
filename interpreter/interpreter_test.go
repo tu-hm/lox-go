@@ -37,7 +37,7 @@ func parseProgram(t *testing.T, source string) []ast.Stmt {
 // so executing an unresolved tree would look every local up in globals.
 func execute(t *testing.T, interp *interpreter.Interpreter, program []ast.Stmt) error {
 	t.Helper()
-	if errs := resolver.Resolve(interp, program); len(errs) != 0 {
+	if errs, _ := resolver.Resolve(interp, program); len(errs) != 0 {
 		t.Fatalf("resolve: %v", errs)
 	}
 	return interp.Execute(program)
