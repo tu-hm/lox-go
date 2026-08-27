@@ -14,7 +14,16 @@ import (
 type Interpreter struct {
 	globals     *Environment
 	environment *Environment
-	out         io.Writer
+	// locals is what the resolver hands over: for each variable use, the
+	// number of scopes between that use and the declaration it refers to.
+	// The key is the syntax node itself. Every ast node is used through a
+	// pointer and Go compares pointer keys by identity, which is the same
+	// guarantee the book gets from Java's IdentityHashMap — two textually
+	// identical uses in different places stay distinct entries. Nothing may
+	// copy a node by value or rebuild the tree between resolution and
+	// execution, or the entry recorded here becomes unreachable.
+	locals map[ast.Expr]int
+	out    io.Writer
 }
 
 var (
@@ -38,7 +47,12 @@ func NewWithWriter(out io.Writer) *Interpreter {
 	}
 	globals := NewEnvironment(nil)
 	globals.Define("clock", nativeClock{})
-	return &Interpreter{globals: globals, environment: globals, out: out}
+	return &Interpreter{
+		globals:     globals,
+		environment: globals,
+		locals:      make(map[ast.Expr]int),
+		out:         out,
+	}
 }
 
 func (i *Interpreter) Interpret(e ast.Expr) (value any, err error) {
@@ -77,6 +91,28 @@ func (i *Interpreter) execute(stmt ast.Stmt) {
 	stmt.Accept(i)
 }
 
+// Resolve records how many scopes separate one variable use from its
+// declaration. Package resolver owns the analysis; the interpreter only stores
+// the answer and trusts it. Executing a tree that was never resolved is not an
+// error but a different language: every local would be looked up in globals.
+func (i *Interpreter) Resolve(e ast.Expr, depth int) {
+	i.locals[e] = depth
+}
+
+// lookUpVariable reads a variable use through whichever mechanism applies. A
+// resolved use hops a known number of environments; an unresolved one is by
+// definition global, and only that case can still fail at runtime.
+func (i *Interpreter) lookUpVariable(name token.Token, e ast.Expr) any {
+	if depth, ok := i.locals[e]; ok {
+		return i.environment.GetAt(depth, name.Lexeme)
+	}
+	value, err := i.globals.Get(name)
+	if err != nil {
+		i.failWith(err)
+	}
+	return value
+}
+
 func (i *Interpreter) fail(t token.Token, message string) {
 	panic(runtimeSignal{err: &errors.RuntimeError{Token: t, Message: message}})
 }
@@ -87,7 +123,11 @@ func (i *Interpreter) failWith(err *errors.RuntimeError) {
 
 func (i *Interpreter) VisitAssignExpr(e *ast.Assign) any {
 	value := i.evaluate(e.Value)
-	if err := i.environment.Assign(e.Name, value); err != nil {
+	if depth, ok := i.locals[e]; ok {
+		i.environment.AssignAt(depth, e.Name.Lexeme, value)
+		return value
+	}
+	if err := i.globals.Assign(e.Name, value); err != nil {
 		i.failWith(err)
 	}
 	return value
@@ -115,11 +155,7 @@ func (i *Interpreter) VisitLiteralExpr(e *ast.Literal) any {
 }
 
 func (i *Interpreter) VisitVariableExpr(e *ast.Variable) any {
-	value, err := i.environment.Get(e.Name)
-	if err != nil {
-		i.failWith(err)
-	}
-	return value
+	return i.lookUpVariable(e.Name, e)
 }
 
 func (i *Interpreter) VisitGroupingExpr(e *ast.Grouping) any {

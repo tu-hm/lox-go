@@ -11,6 +11,7 @@ import (
 	"compiler101/lexer/token"
 	"compiler101/parser"
 	loxerrors "compiler101/pkg/errors"
+	"compiler101/resolver"
 )
 
 func parseExpr(t *testing.T, source string) ast.Expr {
@@ -29,6 +30,17 @@ func parseProgram(t *testing.T, source string) []ast.Stmt {
 		t.Fatalf("parse program: %v", errs)
 	}
 	return statements
+}
+
+// execute resolves, then runs, which is the order the real pipeline uses. Since
+// chapter 11 the interpreter reads a local at the depth the resolver recorded,
+// so executing an unresolved tree would look every local up in globals.
+func execute(t *testing.T, interp *interpreter.Interpreter, program []ast.Stmt) error {
+	t.Helper()
+	if errs := resolver.Resolve(interp, program); len(errs) != 0 {
+		t.Fatalf("resolve: %v", errs)
+	}
+	return interp.Execute(program)
 }
 
 // eval drives the complete user-facing expression pipeline.
@@ -229,7 +241,7 @@ func TestExecuteStatementsVariablesAndScope(t *testing.T) {
 		print a;
 	`)
 
-	if err := interp.Execute(program); err != nil {
+	if err := execute(t, interp, program); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if got, want := out.String(), "nil\nlocal\nlocal!\nglobal\n"; got != want {
@@ -248,7 +260,7 @@ func TestAssignmentReturnsValueAndAssociatesRight(t *testing.T) {
 		print b;
 	`)
 
-	if err := interp.Execute(program); err != nil {
+	if err := execute(t, interp, program); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if got, want := out.String(), "3\n3\n3\n"; got != want {
@@ -259,7 +271,7 @@ func TestAssignmentReturnsValueAndAssociatesRight(t *testing.T) {
 func TestUndefinedVariableErrors(t *testing.T) {
 	for _, source := range []string{"print missing;", "missing = 1;"} {
 		t.Run(source, func(t *testing.T) {
-			err := interpreter.NewWithWriter(&bytes.Buffer{}).Execute(parseProgram(t, source))
+			err := execute(t, interpreter.NewWithWriter(&bytes.Buffer{}), parseProgram(t, source))
 			var runtimeErr *loxerrors.RuntimeError
 			if !stderrors.As(err, &runtimeErr) {
 				t.Fatalf("error = %T %v, want *errors.RuntimeError", err, err)
@@ -288,11 +300,11 @@ func TestRuntimeErrorRestoresBlockEnvironment(t *testing.T) {
 	var out bytes.Buffer
 	interp := interpreter.NewWithWriter(&out)
 
-	err := interp.Execute(parseProgram(t, `{ var local = "inside"; print missing; }`))
+	err := execute(t, interp, parseProgram(t, `{ var local = "inside"; print missing; }`))
 	if err == nil {
 		t.Fatal("failing block returned no error")
 	}
-	err = interp.Execute(parseProgram(t, `print local;`))
+	err = execute(t, interp, parseProgram(t, `print local;`))
 	var runtimeErr *loxerrors.RuntimeError
 	if !stderrors.As(err, &runtimeErr) || runtimeErr.Token.Lexeme != "local" {
 		t.Fatalf("after block failure got %v, want undefined local", err)
@@ -313,7 +325,7 @@ func TestLogicalOperatorsShortCircuitAndReturnOperands(t *testing.T) {
 		print false and missing;
 	`)
 
-	if err := interp.Execute(program); err != nil {
+	if err := execute(t, interp, program); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if got, want := out.String(), "left\nright\nfalse\nright\nclean\ntrue\nfalse\n"; got != want {
@@ -335,7 +347,7 @@ func TestIfAndWhileControlExecution(t *testing.T) {
 		}
 	`)
 
-	if err := interp.Execute(program); err != nil {
+	if err := execute(t, interp, program); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if got, want := out.String(), "then\nelse\nzero is truthy\n0\n1\n2\n"; got != want {
@@ -357,14 +369,14 @@ func TestForDesugaringExecutionAndInitializerScope(t *testing.T) {
 		}
 	`)
 
-	if err := interp.Execute(program); err != nil {
+	if err := execute(t, interp, program); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if got, want := out.String(), "6\n0\n1\n"; got != want {
 		t.Errorf("output = %q, want %q", got, want)
 	}
 
-	err := interp.Execute(parseProgram(t, "print i;"))
+	err := execute(t, interp, parseProgram(t, "print i;"))
 	var runtimeErr *loxerrors.RuntimeError
 	if !stderrors.As(err, &runtimeErr) || runtimeErr.Token.Lexeme != "i" {
 		t.Fatalf("loop initializer leaked out of its scope: %v", err)
@@ -390,7 +402,7 @@ func TestNativeClockAndCallableErrors(t *testing.T) {
 		{`clock(1);`, "Expected 0 arguments but got 1."},
 	}
 	for _, test := range tests {
-		err := interpreter.NewWithWriter(&bytes.Buffer{}).Execute(parseProgram(t, test.source))
+		err := execute(t, interpreter.NewWithWriter(&bytes.Buffer{}), parseProgram(t, test.source))
 		var runtimeErr *loxerrors.RuntimeError
 		if !stderrors.As(err, &runtimeErr) {
 			t.Errorf("Execute(%q) error = %T %v, want *errors.RuntimeError", test.source, err, err)
@@ -429,7 +441,7 @@ func TestUserFunctionsRecursionAndReturns(t *testing.T) {
 		print fib(8);
 	`)
 
-	if err := interp.Execute(program); err != nil {
+	if err := execute(t, interp, program); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if got, want := out.String(), "<fn add>\n5\nbody\nnil\n3\n21\n"; got != want {
@@ -451,7 +463,7 @@ func TestArgumentsEvaluateLeftToRight(t *testing.T) {
 		print trace;
 	`)
 
-	if err := interp.Execute(program); err != nil {
+	if err := execute(t, interp, program); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if got, want := out.String(), "ab\nab\n"; got != want {
@@ -479,7 +491,7 @@ func TestClosuresCaptureAndRetainDeclarationEnvironment(t *testing.T) {
 		print second();
 	`)
 
-	if err := interp.Execute(program); err != nil {
+	if err := execute(t, interp, program); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if got, want := out.String(), "1\n2\n1\n"; got != want {
@@ -508,12 +520,89 @@ func TestParserFrontEndsExecuteFunctionsEqually(t *testing.T) {
 			t.Fatalf("%s ParseProgram: %v", kind, errs)
 		}
 		var out bytes.Buffer
-		if err := interpreter.NewWithWriter(&out).Execute(program); err != nil {
+		if err := execute(t, interpreter.NewWithWriter(&out), program); err != nil {
 			t.Fatalf("%s Execute: %v", kind, err)
 		}
 		outputs = append(outputs, out.String())
 	}
 	if outputs[0] != "42\n" || outputs[1] != outputs[0] {
 		t.Errorf("recursive descent = %q, LL(k) = %q, want 42", outputs[0], outputs[1])
+	}
+}
+
+// TestResolvedScopeIgnoresLaterDeclarations is the chapter's motivating program.
+// showA is declared while a is still the global, and the later local a lands in
+// the same block — the same runtime environment — yet must not change what showA
+// reads. Before chapter 11 this printed "global" then "block".
+func TestResolvedScopeIgnoresLaterDeclarations(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		var a = "global";
+		{
+			fun showA() { print a; }
+			showA();
+			var a = "block";
+			showA();
+		}
+	`)
+
+	if err := execute(t, interp, program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got, want := out.String(), "global\nglobal\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+// TestResolvedDepthReachesTheIntendedScope exercises a distance greater than
+// one: inner reads and writes a variable two environments up, past a scope that
+// does not declare it, and the identically named global stays untouched.
+func TestResolvedDepthReachesTheIntendedScope(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		var value = "global";
+		fun outer() {
+			var value = "outer";
+			fun middle() {
+				fun inner() {
+					value = value + "!";
+					return value;
+				}
+				return inner;
+			}
+			return middle();
+		}
+
+		var bump = outer();
+		print bump();
+		print bump();
+		print value;
+	`)
+
+	if err := execute(t, interp, program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got, want := out.String(), "outer!\nouter!!\nglobal\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+// TestUnresolvedLocalFallsBackToGlobals pins down what the interpreter does with
+// a tree nobody resolved: locals are not found, so every name is looked up in
+// globals. It is the reason resolution is a required pipeline stage rather than
+// an optimization, and the reason the test helper above always runs it.
+func TestUnresolvedLocalFallsBackToGlobals(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+
+	err := interp.Execute(parseProgram(t, `{ var local = "inside"; print local; }`))
+	var runtimeErr *loxerrors.RuntimeError
+	if !stderrors.As(err, &runtimeErr) || runtimeErr.Token.Lexeme != "local" {
+		t.Fatalf("unresolved program error = %v, want undefined variable 'local'", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("output = %q, want nothing", out.String())
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"compiler101/parser"
 	"compiler101/parser/llk"
 	"compiler101/pkg/errors"
+	"compiler101/resolver"
 )
 
 // options is what the flags add up to: which parsing algorithm runs, and how
@@ -76,6 +77,8 @@ func emitExpression(interp *interpreter.Interpreter, expr ast.Expr, show string)
 	case "rpn":
 		fmt.Println((&ast.RPNPrinter{}).Print(expr))
 	default:
+		// No resolution step: an expression cannot declare anything, so a bare
+		// REPL line has no local scopes and every name in it is global.
 		value, err := interp.Interpret(expr)
 		if reportRuntimeError(err) {
 			return
@@ -92,6 +95,9 @@ func emitProgram(interp *interpreter.Interpreter, statements []ast.Stmt, show st
 	case "rpn":
 		expressions = &ast.RPNPrinter{}
 	default:
+		if len(resolver.Resolve(interp, statements)) != 0 {
+			return // static errors, already reported through pkg/errors
+		}
 		reportRuntimeError(interp.Execute(statements))
 		return
 	}

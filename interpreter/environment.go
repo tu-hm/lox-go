@@ -48,6 +48,32 @@ func (e *Environment) Assign(name token.Token, value any) *errors.RuntimeError {
 	return undefinedVariable(name)
 }
 
+// ancestor returns the environment exactly distance hops up the chain. The
+// walk is unconditional because the resolver counted the hops from the syntax,
+// so a shorter chain would be a bug in this interpreter, not bad Lox.
+func (e *Environment) ancestor(distance int) *Environment {
+	environment := e
+	for range distance {
+		environment = environment.Enclosing
+	}
+	return environment
+}
+
+// GetAt reads a binding the resolver already located. The missing not-found
+// case is the payoff of the resolver pass, not an oversight: the name is known
+// to live in that exact scope, so there is nothing to search and no error to
+// report. Get remains for globals, whose scope is never resolved statically.
+func (e *Environment) GetAt(distance int, name string) any {
+	return e.ancestor(distance).values[name]
+}
+
+// AssignAt is the write half of GetAt and skips the same search. It cannot
+// create a variable by accident: the resolver found an existing declaration at
+// this distance, which is why the assignment was given one.
+func (e *Environment) AssignAt(distance int, name string, value any) {
+	e.ancestor(distance).Define(name, value)
+}
+
 func undefinedVariable(name token.Token) *errors.RuntimeError {
 	return &errors.RuntimeError{Token: name, Message: "Undefined variable '" + name.Lexeme + "'."}
 }

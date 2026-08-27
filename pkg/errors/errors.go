@@ -66,6 +66,32 @@ func ParseErrorAt(t token.Token, message string) error {
 	return &ParseError{Token: t, Message: message}
 }
 
+// ResolveError is a static-semantics error found by the resolver: a rule about
+// bindings that the grammar cannot express, such as reading a local variable
+// inside its own initializer. It mirrors ParseError because callers treat the
+// two identically — report, and refuse to run the program — and only the phase
+// that produced them differs.
+type ResolveError struct {
+	Token   token.Token
+	Message string
+}
+
+// Error has no at-end case, unlike ParseError: a resolver error always names a
+// declaration or a keyword the parser already accepted, so there is always a
+// lexeme to show.
+func (e *ResolveError) Error() string {
+	return fmt.Sprintf("line %d, at %q: %s", e.Token.Line, e.Token.Lexeme, e.Message)
+}
+
+// ResolveErrorAt reports t to the user and returns the value the resolver
+// collects. Unlike a parse error it is not a signal to unwind: the resolver has
+// no ambiguity to recover from, so it keeps walking and reports every error in
+// one pass.
+func ResolveErrorAt(t token.Token, message string) error {
+	ErrorToken(t, message)
+	return &ResolveError{Token: t, Message: message}
+}
+
 // RuntimeError is a failure discovered while evaluating an expression. Token
 // identifies the operator that failed so callers can report the source line.
 type RuntimeError struct {

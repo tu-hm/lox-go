@@ -1,6 +1,7 @@
 package errors_test
 
 import (
+	"errors"
 	"io"
 	"os"
 	"testing"
@@ -63,5 +64,54 @@ func TestResetClearsBothErrorKinds(t *testing.T) {
 
 	if loxerrors.HadError || loxerrors.HadRuntimeError {
 		t.Errorf("Reset left HadError=%t HadRuntimeError=%t", loxerrors.HadError, loxerrors.HadRuntimeError)
+	}
+}
+
+func TestResolveErrorAtReportsAndReturns(t *testing.T) {
+	loxerrors.Reset()
+	t.Cleanup(loxerrors.Reset)
+
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stderr
+	os.Stderr = write
+	defer func() { os.Stderr = original }()
+
+	returned := loxerrors.ResolveErrorAt(
+		token.Token{Type: token.RETURN, Lexeme: "return", Line: 3},
+		"Can't return from top-level code.",
+	)
+
+	if err := write.Close(); err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = original
+	got, err := io.ReadAll(read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := read.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "[line 3] Error at 'return': Can't return from top-level code.\n"
+	if string(got) != want {
+		t.Errorf("stderr = %q, want %q", got, want)
+	}
+	if !loxerrors.HadError {
+		t.Error("HadError was not set")
+	}
+	if loxerrors.HadRuntimeError {
+		t.Error("HadRuntimeError was set; a static error is not a runtime error")
+	}
+
+	var resolveErr *loxerrors.ResolveError
+	if !errors.As(returned, &resolveErr) {
+		t.Fatalf("returned %T, want *errors.ResolveError", returned)
+	}
+	if got, want := resolveErr.Error(), `line 3, at "return": Can't return from top-level code.`; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
 	}
 }

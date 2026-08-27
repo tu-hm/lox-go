@@ -54,3 +54,41 @@ func TestBareExpressionDetectionIsReplOnlySyntaxChoice(t *testing.T) {
 		}
 	}
 }
+
+func TestRunSourceRefusesToRunAfterStaticError(t *testing.T) {
+	defer errors.Reset()
+
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	runSource(`{ var a = 1; var a = 2; print "unreachable"; }`, options{}, interp, false)
+
+	if out.Len() != 0 {
+		t.Errorf("output = %q, want nothing: a static error must stop the program before it runs", out.String())
+	}
+	if !errors.HadError {
+		t.Error("HadError = false, want a reported static error")
+	}
+	if errors.HadRuntimeError {
+		t.Error("HadRuntimeError = true, want a static error instead")
+	}
+}
+
+func TestReplSurvivesStaticErrorAndKeepsResolvingLines(t *testing.T) {
+	defer errors.Reset()
+
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	runSource(`{ return 1; }`, options{}, interp, true)
+	errors.Reset() // the REPL loop clears the flag between lines
+
+	// A fresh resolver per line, the same interpreter: block scopes work on the
+	// next line even though the previous one was refused.
+	runSource(`{ var a = "local"; print a; }`, options{}, interp, true)
+
+	if got, want := out.String(), "local\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+	if errors.HadError {
+		t.Error("HadError = true, want the good line to resolve cleanly")
+	}
+}

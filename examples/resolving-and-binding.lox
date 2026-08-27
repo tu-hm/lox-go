@@ -1,0 +1,78 @@
+// Chapter 11 — resolving and binding.
+//
+// Nothing here is new syntax. What changed is which declaration each name
+// refers to: the resolver decides that once, from the program text, before
+// anything runs.
+
+// The program that motivates the whole chapter. showA is declared while a is
+// still the global one, and the later local a lands in the same block — the
+// same runtime environment — yet showA must keep reading the global.
+var a = "global";
+{
+  fun showA() {
+    print a;
+  }
+
+  showA();
+  var a = "block";
+  showA();
+}
+
+// A distance greater than one: inner reaches past middle, which declares
+// nothing it needs, to the variable two environments up.
+fun outer() {
+  var value = "outer";
+
+  fun middle() {
+    fun inner() {
+      value = value + "!";
+      return value;
+    }
+    return inner;
+  }
+
+  return middle();
+}
+
+var bump = outer();
+print bump(); // outer!
+print bump(); // outer!!
+print a;      // global — the same name, a different variable
+
+// Resolution is static, so two calls to the same declaration still get
+// independent state: the distance is shared, the environments are not.
+fun makeCounter() {
+  var count = 0;
+  fun tick() {
+    count = count + 1;
+    return count;
+  }
+  return tick;
+}
+
+var first = makeCounter();
+var second = makeCounter();
+print first();  // 1
+print first();  // 2
+print second(); // 1
+
+// Resolution says which variable, not which copy of it. The desugared for loop
+// declares i in one scope outside the body, so a closure made inside the body
+// shares that i instead of copying the value it had at the time.
+var saved;
+for (var i = 0; i < 3; i = i + 1) {
+  if (i == 1) {
+    fun remember() {
+      print i;
+    }
+    saved = remember;
+  }
+}
+saved(); // 3 — one i for the whole loop, and the loop has moved on
+
+// Each of these is a static error, refused before the program runs. Uncomment
+// one to see the message:
+//
+//   { var twice = 1; var twice = 2; }   Already a variable with this name in this scope.
+//   { var self = self; }                Can't read local variable in its own initializer.
+//   return "nowhere";                   Can't return from top-level code.

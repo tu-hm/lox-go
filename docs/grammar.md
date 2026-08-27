@@ -159,6 +159,25 @@ Both parameter and argument lists are limited to 255 entries for compatibility
 with the bytecode interpreter built later in the book. A missing return value,
 or reaching the end of a function body, produces `nil`.
 
+## Chapter 11 — resolving and binding
+
+Chapter 11 adds no productions. The grammar above is the whole language, and the
+resolver introduced in that chapter reads the tree the rules below produce.
+
+That is not a coincidence about this chapter so much as a limit of the notation:
+a context-free grammar can say where an identifier may appear, but not which
+declaration it refers to. The rules the resolver enforces are exactly the ones
+the notation cannot state.
+
+```
+Already a variable with this name in this scope.   redeclaration in one local scope
+Can't read local variable in its own initializer.  a name inside its own varDecl
+Can't return from top-level code.                  returnStmt outside a function body
+```
+
+Each is checked over the tree, not the token stream, which is why both front ends
+get them for free. See [Chapter 11 — resolving and binding](11-resolving-and-binding.md).
+
 ## The LL(k) form — what the table-driven parser reads
 
 `parser/llk` parses the same language from the same grammar written differently,
