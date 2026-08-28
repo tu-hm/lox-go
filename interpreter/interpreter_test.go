@@ -1022,3 +1022,77 @@ func TestClassMethods(t *testing.T) {
 		t.Errorf("output = %q, want %q", got, want)
 	}
 }
+
+// TestGetterMethods covers challenge 2. A getter is the one property whose read
+// is a call, and it sits inside the same fields-then-methods rule rather than
+// beside it.
+func TestGetterMethods(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		class Circle {
+			init(radius) { this.radius = radius; }
+			diameter { return this.radius * 2; }
+			// A getter may read another getter, and a method may read both.
+			circumference { return 3 * this.diameter; }
+			scaled(by) { return this.diameter * by; }
+		}
+		var circle = Circle(4);
+		print circle.diameter;
+		print circle.circumference;
+		print circle.scaled(3);
+
+		// The getter recomputes: it is a call, not a cached field.
+		circle.radius = 10;
+		print circle.diameter;
+
+		// A field of the same name shadows the getter, exactly as it shadows a
+		// method — the lookup order is unchanged, not special-cased.
+		circle.diameter = "shadowed";
+		print circle.diameter;
+
+		// A zero-parameter method is still a method and still needs its call.
+		class Both {
+			asGetter { return "getter"; }
+			asMethod() { return "method"; }
+		}
+		print Both().asGetter;
+		print Both().asMethod();
+
+		// Static getters work, and this inside one is the class.
+		class Config {
+			class version { return "1.0"; }
+			class describe { return "config " + this.version; }
+		}
+		print Config.version;
+		print Config.describe;
+	`)
+
+	if err := execute(t, interp, program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	want := "8\n24\n24\n20\nshadowed\ngetter\nmethod\n1.0\nconfig 1.0\n"
+	if got := out.String(); got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+// TestGetterErrorsPropagate: a getter body runs during a property read, so a
+// runtime error inside it surfaces at the read rather than at some later call.
+func TestGetterErrorsPropagate(t *testing.T) {
+	defer loxerrors.Reset()
+
+	interp := interpreter.NewWithWriter(&bytes.Buffer{})
+	err := execute(t, interp, parseProgram(t, `
+		class C { bad { return 1 + "text"; } }
+		print C().bad;
+	`))
+
+	var runtimeErr *loxerrors.RuntimeError
+	if !stderrors.As(err, &runtimeErr) {
+		t.Fatalf("error = %v, want a *RuntimeError", err)
+	}
+	if want := "Operands must be two numbers or two strings."; runtimeErr.Message != want {
+		t.Errorf("message = %q, want %q", runtimeErr.Message, want)
+	}
+}

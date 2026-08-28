@@ -52,11 +52,12 @@ func (p *StmtPrinter) VisitClassStmt(stmt *Class) any {
 	for _, method := range stmt.Methods {
 		parts = append(parts, p.VisitFunctionStmt(method).(string))
 	}
-	// A class method prints as "static" rather than "fun", because the
-	// difference is not visible anywhere else in the rendered tree.
+	// A class method is tagged "static", because which list it landed in is
+	// not visible anywhere else in the rendered tree. A static getter keeps
+	// both tags: "(static get name ...)".
 	for _, method := range stmt.ClassMethods {
-		body := p.VisitFunctionStmt(method).(string)
-		parts = append(parts, "(static "+strings.TrimPrefix(body, "(fun "))
+		rendered := p.VisitFunctionStmt(method).(string)
+		parts = append(parts, "(static "+strings.TrimPrefix(rendered, "("))
 	}
 	return "(" + strings.Join(parts, " ") + ")"
 }
@@ -66,11 +67,17 @@ func (p *StmtPrinter) VisitExpressionStmt(stmt *Expression) any {
 }
 
 func (p *StmtPrinter) VisitFunctionStmt(stmt *Function) any {
+	body := p.VisitBlockStmt(&Block{Statements: stmt.Body}).(string)
+	// A getter has no parameter list to render, and printing an empty one would
+	// make it indistinguishable from a zero-parameter method.
+	if stmt.IsGetter {
+		return "(get " + stmt.Name.Lexeme + " " + body + ")"
+	}
+
 	params := make([]string, len(stmt.Params))
 	for index, param := range stmt.Params {
 		params[index] = param.Lexeme
 	}
-	body := p.VisitBlockStmt(&Block{Statements: stmt.Body}).(string)
 	return "(fun " + stmt.Name.Lexeme + " (" + strings.Join(params, " ") + ") " + body + ")"
 }
 

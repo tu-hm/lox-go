@@ -114,7 +114,7 @@ func (p *Parser) classDeclaration() (ast.Stmt, error) {
 	var methods, classMethods []*ast.Function
 	for !p.check(token.RIGHT_BRACE) && !p.isAtEnd() {
 		onTheClass := p.match(token.CLASS)
-		method, err := p.function("method")
+		method, err := p.functionBody("method", true)
 		if err != nil {
 			return nil, err
 		}
@@ -132,10 +132,29 @@ func (p *Parser) classDeclaration() (ast.Stmt, error) {
 }
 
 func (p *Parser) function(kind string) (*ast.Function, error) {
+	return p.functionBody(kind, false)
+}
+
+// functionBody parses the `function` rule. allowGetter makes the parameter list
+// optional, which is legal only inside a class body: a `{` straight after the
+// name means the member is a getter, and its body runs on property access.
+//
+// A plain `fun` declaration never takes that path, so `fun f {}` stays the
+// error it has always been.
+func (p *Parser) functionBody(kind string, allowGetter bool) (*ast.Function, error) {
 	name, err := p.consume(token.IDENTIFIER, "Expect "+kind+" name.")
 	if err != nil {
 		return nil, err
 	}
+
+	if allowGetter && p.check(token.LEFT_BRACE) {
+		body, err := p.blockBody("Expect '{' before " + kind + " body.")
+		if err != nil {
+			return nil, err
+		}
+		return &ast.Function{Name: name, Body: body, IsGetter: true}, nil
+	}
+
 	if _, err := p.consume(token.LEFT_PAREN, "Expect '(' after "+kind+" name."); err != nil {
 		return nil, err
 	}
@@ -160,14 +179,21 @@ func (p *Parser) function(kind string) (*ast.Function, error) {
 	if _, err := p.consume(token.RIGHT_PAREN, "Expect ')' after parameters."); err != nil {
 		return nil, err
 	}
-	if _, err := p.consume(token.LEFT_BRACE, "Expect '{' before "+kind+" body."); err != nil {
-		return nil, err
-	}
-	body, err := p.block()
+	body, err := p.blockBody("Expect '{' before " + kind + " body.")
 	if err != nil {
 		return nil, err
 	}
 	return &ast.Function{Name: name, Params: params, Body: body}, nil
+}
+
+// blockBody consumes a brace-delimited body, reporting message when the opening
+// brace is missing. It exists so the getter path and the ordinary path share
+// one spelling of "a body is a block".
+func (p *Parser) blockBody(message string) ([]ast.Stmt, error) {
+	if _, err := p.consume(token.LEFT_BRACE, message); err != nil {
+		return nil, err
+	}
+	return p.block()
 }
 
 func (p *Parser) varDeclaration() (ast.Stmt, error) {

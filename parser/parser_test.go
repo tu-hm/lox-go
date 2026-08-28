@@ -612,10 +612,51 @@ func TestParseClassMethods(t *testing.T) {
 
 	// The printer distinguishes the two, which is the only place the tree shows
 	// which list a method landed in.
+	// A class method composes both tags: "static" plus whatever the member
+	// already was, so a static getter reads "(static get ...)".
 	want := "(class Math (fun describe () (block (return math))) " +
-		"(static square (n) (block (return (* n n)))) " +
-		"(static cube (n) (block (return (* (* n n) n)))))"
+		"(static fun square (n) (block (return (* n n)))) " +
+		"(static fun cube (n) (block (return (* (* n n) n)))))"
 	if got := renderStatements(statements); got[0] != want {
 		t.Errorf("render =\n  %s\nwant\n  %s", got[0], want)
+	}
+}
+
+// TestParseGetters covers challenge 2's syntax. The parameter list is optional
+// only inside a class body, so `fun f {}` stays the error it always was.
+func TestParseGetters(t *testing.T) {
+	defer errors.Reset()
+
+	statements, errs := parserFor(t, `
+		class Circle {
+			area { return 1; }
+			radius() { return 2; }
+			class version { return 3; }
+		}
+	`).ParseProgram()
+	if len(errs) != 0 {
+		t.Fatalf("ParseProgram: %v", errs)
+	}
+
+	class := statements[0].(*ast.Class)
+	if len(class.Methods) != 2 || !class.Methods[0].IsGetter || class.Methods[1].IsGetter {
+		t.Errorf("Methods = %v, want area as a getter and radius as a method", class.Methods)
+	}
+	if len(class.ClassMethods) != 1 || !class.ClassMethods[0].IsGetter {
+		t.Errorf("ClassMethods = %v, want version as a getter", class.ClassMethods)
+	}
+
+	want := "(class Circle (get area (block (return 1))) (fun radius () (block (return 2))) " +
+		"(static get version (block (return 3))))"
+	if got := renderStatements(statements); got[0] != want {
+		t.Errorf("render =\n  %s\nwant\n  %s", got[0], want)
+	}
+
+	// A getter is only a class-body shape. A plain function still needs its
+	// parameter list.
+	if _, errs := parserFor(t, "fun f { return 1; }").ParseProgram(); len(errs) == 0 {
+		t.Error("fun f { } parsed as a getter, want an error")
+	} else if parseErr, ok := errs[0].(*ParseError); !ok || parseErr.Message != "Expect '(' after function name." {
+		t.Errorf("error = %v, want \"Expect '(' after function name.\"", errs[0])
 	}
 }

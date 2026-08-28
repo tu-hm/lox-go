@@ -168,7 +168,7 @@ func (i *Interpreter) VisitGetExpr(e *ast.Get) any {
 	if !ok {
 		i.fail(e.Name, "Only instances have properties.")
 	}
-	value, err := owner.get(e.Name)
+	value, err := owner.get(i, e.Name)
 	if err != nil {
 		i.failWith(err)
 	}

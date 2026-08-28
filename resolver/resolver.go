@@ -276,6 +276,11 @@ func (r *Resolver) VisitClassStmt(stmt *ast.Class) any {
 	for _, method := range stmt.Methods {
 		kind := functionMethod
 		if method.Name.Lexeme == "init" {
+			// An initializer has to stay callable: construction calls it with
+			// the class's arguments, and a getter cannot be called at all.
+			if method.IsGetter {
+				r.fail(method.Name, "Can't declare an initializer as a getter.")
+			}
 			kind = functionInitializer
 		}
 		r.resolveFunction(method, kind)

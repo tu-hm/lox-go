@@ -52,8 +52,8 @@ func (c *LoxClass) findClassMethod(name string) *LoxFunction {
 
 // get and set make the class itself a property owner. A class method binds
 // `this` to the class, so one class method can call another through `this`.
-func (c *LoxClass) get(name token.Token) (any, *errors.RuntimeError) {
-	return lookUpProperty(c, c.fields, c.findClassMethod, name)
+func (c *LoxClass) get(interpreter *Interpreter, name token.Token) (any, *errors.RuntimeError) {
+	return lookUpProperty(interpreter, c, c.fields, c.findClassMethod, name)
 }
 
 func (c *LoxClass) set(name token.Token, value any) {

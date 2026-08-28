@@ -56,10 +56,16 @@ func (e *Expression) Accept(v StmtVisitor) any { return v.VisitExpressionStmt(e)
 func (e *Expression) isStmt()                  {}
 
 // Function binds Name to a callable with Params and Body.
+//
+// IsGetter marks a class body member declared without a parameter list, whose
+// body runs on property access rather than on a call. The flag has to live on
+// the node because a getter and a zero-parameter method are otherwise
+// identical here: both have no Params.
 type Function struct {
-	Name   token.Token
-	Params []token.Token
-	Body   []Stmt
+	Name     token.Token
+	Params   []token.Token
+	Body     []Stmt
+	IsGetter bool
 }
 
 func (e *Function) Accept(v StmtVisitor) any { return v.VisitFunctionStmt(e) }

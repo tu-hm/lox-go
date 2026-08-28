@@ -849,9 +849,38 @@ func TestClassMethodsForEveryK(t *testing.T) {
 			t.Fatalf("k=%d ParseProgram: %v", k, errs)
 		}
 		want := "(class Math (fun describe () (block (return math))) " +
-			"(static square (n) (block (return (* n n)))))"
+			"(static fun square (n) (block (return (* n n)))))"
 		if got := renderProgram(statements); len(got) != 1 || got[0] != want {
 			t.Errorf("k=%d ParseProgram = %v, want [%s]", k, got, want)
+		}
+	}
+}
+
+// TestGettersForEveryK: an optional parameter list is an orchestration-layer
+// decision, not a table one, so it behaves identically at every lookahead.
+func TestGettersForEveryK(t *testing.T) {
+	defer errors.Reset()
+
+	for k := MinK; k <= MaxK; k++ {
+		statements, errs := parserFor(t, `
+			class Circle {
+				area { return 1; }
+				radius() { return 2; }
+				class version { return 3; }
+			}
+		`, k).ParseProgram()
+		if len(errs) != 0 {
+			t.Fatalf("k=%d ParseProgram: %v", k, errs)
+		}
+		want := "(class Circle (get area (block (return 1))) (fun radius () (block (return 2))) " +
+			"(static get version (block (return 3))))"
+		if got := renderProgram(statements); len(got) != 1 || got[0] != want {
+			t.Errorf("k=%d ParseProgram = %v, want [%s]", k, got, want)
+		}
+
+		// Still not a shape a plain function may take.
+		if _, errs := parserFor(t, "fun f { return 1; }", k).ParseProgram(); len(errs) == 0 {
+			t.Errorf("k=%d: fun f { } parsed as a getter, want an error", k)
 		}
 	}
 }

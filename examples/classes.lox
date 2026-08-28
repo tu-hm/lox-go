@@ -146,11 +146,62 @@ print Math.description;       // arithmetic
 // reachable through the class, and a class method is not reachable through an
 // instance. Both attempts are `Undefined property`.
 
+// ---------------------------------------------------------------------------
+// Challenge 2 — getters.
+//
+// Drop the parameter list and the body runs on property *access*. That makes a
+// computed value indistinguishable from a stored one at the point of use, which
+// is the whole reason a language wants getters: a field can become a
+// computation later without every caller changing.
+class Circle {
+  init(radius) {
+    this.radius = radius;
+  }
+
+  diameter {
+    return this.radius * 2;
+  }
+
+  // A getter may read another getter, and a method may read both.
+  circumference {
+    return 3 * this.diameter;
+  }
+
+  scaled(by) {
+    return this.diameter * by;
+  }
+}
+
+var circle = Circle(4);
+print circle.diameter;        // 8
+print circle.circumference;   // 24
+print circle.scaled(3);       // 24
+
+// It is a call, not a cached field: the value follows the state.
+circle.radius = 10;
+print circle.diameter;        // 20
+
+// And it sits inside the fields-then-methods rule rather than beside it, so a
+// field of the same name still wins.
+circle.diameter = "shadowed";
+print circle.diameter;        // shadowed
+
+// A zero-parameter method is still a method, and still needs its call. That is
+// why the getter flag has to be recorded when the class is parsed: by the time
+// the tree exists, the two shapes are otherwise identical.
+class Both {
+  asGetter { return "getter"; }
+  asMethod() { return "method"; }
+}
+print Both().asGetter;        // getter
+print Both().asMethod();      // method
+
 // Each of these is refused before the program runs. Uncomment one to see it:
 //
 //   print this;                            Can't use 'this' outside of a class.
 //   fun f() { return this; }               Can't use 'this' outside of a class.
 //   class C { init() { return 1; } }       Can't return a value from an initializer.
+//   class C { init { this.a = 1; } }       Can't declare an initializer as a getter.
 //
 // And each of these is a runtime error, because whether a property exists is
 // not a question the text can answer:

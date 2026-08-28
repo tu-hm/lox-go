@@ -12,7 +12,7 @@ import (
 // The interpreter switches on this interface rather than on *LoxInstance, which
 // is what keeps VisitGetExpr from having to know the two cases apart.
 type propertyOwner interface {
-	get(name token.Token) (any, *errors.RuntimeError)
+	get(interpreter *Interpreter, name token.Token) (any, *errors.RuntimeError)
 	set(name token.Token, value any)
 }
 
@@ -39,8 +39,8 @@ func newLoxInstance(class *LoxClass) *LoxInstance {
 	return &LoxInstance{class: class, fields: make(map[string]any)}
 }
 
-func (o *LoxInstance) get(name token.Token) (any, *errors.RuntimeError) {
-	return lookUpProperty(o, o.fields, o.class.findMethod, name)
+func (o *LoxInstance) get(interpreter *Interpreter, name token.Token) (any, *errors.RuntimeError) {
+	return lookUpProperty(interpreter, o, o.fields, o.class.findMethod, name)
 }
 
 // set always succeeds. There is no such thing as an undefined field to assign
@@ -64,9 +64,14 @@ func (o *LoxInstance) String() string { return o.class.name + " instance" }
 // than a map so each caller decides where methods come from — and so chapter
 // 13 can walk a superclass chain without changing this.
 //
+// The interpreter is a parameter because of the getters challenge: a getter's
+// body has to run right here, during the property read, so this needs something
+// to run it with. Nothing else about property lookup uses it.
+//
 // It returns an error rather than panicking with a runtime signal, mirroring
 // Environment.Get: the caller in the interpreter owns the unwinding.
 func lookUpProperty(
+	interpreter *Interpreter,
 	receiver any,
 	fields map[string]any,
 	findMethod func(string) *LoxFunction,
@@ -79,7 +84,14 @@ func lookUpProperty(
 		// Binding here, at access time, is what makes a method reference a
 		// closure over its receiver: the returned function keeps working after
 		// the expression that found it is gone.
-		return method.bind(receiver), nil
+		bound := method.bind(receiver)
+		if method.declaration.IsGetter {
+			// A getter is the one property whose read is a call. It happens
+			// after the field check, so a field of the same name still wins —
+			// the same rule, not an exception to it.
+			return bound.Call(interpreter, nil), nil
+		}
+		return bound, nil
 	}
 	return nil, &errors.RuntimeError{
 		Token:   name,

@@ -3,12 +3,10 @@
 Implementation of [Classes](https://craftinginterpreters.com/classes.html) for
 this repository's tree-walking interpreter.
 
-> Status: core chapter implemented, plus challenge 1 (class methods). Class
-> declarations, instances, property get and set, methods, `this`, `init()`, and
-> `class`-prefixed class methods all work, on both parser front ends and at
-> every supported lookahead. Two static errors and three runtime errors are new.
-> Challenge 2 (getters) is not implemented yet; see
-> [Scope boundary](#scope-boundary).
+> Status: implemented, including both code challenges. Class declarations,
+> instances, property get and set, methods, `this`, `init()`, `class`-prefixed
+> class methods, and getters all work, on both parser front ends and at every
+> supported lookahead. Three static errors and three runtime errors are new.
 
 For a guided walkthrough, follow the [Chapter 12 learning plan](12-learning-plan.md).
 
@@ -153,6 +151,7 @@ Static, refused before anything runs:
 ```
 Can't use 'this' outside of a class.            This with no enclosing class
 Can't return a value from an initializer.       returnStmt with a value inside init()
+Can't declare an initializer as a getter.       init declared without a parameter list
 ```
 
 A warning, because it cannot make a program behave wrongly:
@@ -255,6 +254,64 @@ Two behaviours worth stating, since neither is arbitrary:
 chapter 13's benefit: walking a superclass chain then changes one closure, not
 the shared rule.
 
+## Challenge 2 — getters
+
+```lox
+class Circle {
+  init(radius) { this.radius = radius; }
+  diameter { return this.radius * 2; }
+}
+print Circle(4).diameter; // 8
+```
+
+Drop the parameter list and the body runs on property *access*. What that buys
+is the thing challenge 3 argues about from the other side: a stored field can
+become a computed one later without a single caller changing.
+
+**The flag has to live on the AST.** A getter and a zero-parameter method are
+otherwise identical in the tree — both have no `Params` — so `ast.Function`
+gained `IsGetter bool`. That mirrors how `LoxFunction` already carries
+`isInitializer`: a property of how the thing was declared, not of the call.
+
+The optional parameter list is a class-body shape only. Both parsers route class
+members through a `functionBody(kind, allowGetter)` that plain `fun` declarations
+call with `false`, so `fun f {}` stays the error it has always been — pinned by a
+test in each front end.
+
+**One signature had to change.** A getter body runs *during* the property read,
+so `lookUpProperty` needs something to run it with, and `get` now takes the
+interpreter. Nothing else about property lookup uses it.
+
+The invocation sits *inside* the fields-then-methods rule rather than beside it,
+which is what keeps the rule a rule:
+
+```
+fields[name]            → the field, if there is one
+findMethod(name)        → bind, then Call it if IsGetter
+otherwise               → Undefined property
+```
+
+So a field shadows a getter exactly as it shadows a method. A getter recomputes
+on every read, because it is a call and not a cached field. And a runtime error
+inside a getter body surfaces at the read, not at some later call — pinned by
+`TestGetterErrorsPropagate`.
+
+Static getters compose for free, since a class is already a property owner:
+`class version { return "1.0"; }` works, and `this` inside it is the class.
+
+**One new static error.** An initializer may not be declared as a getter:
+
+```
+Can't declare an initializer as a getter.
+```
+
+Construction calls `init` with the class's arguments, and a getter cannot be
+called at all, so the two shapes are incompatible. A *class-method* getter named
+`init` is fine — it is not a constructor.
+
+The printer composes tags rather than special-casing: `(fun name (params) …)`,
+`(get name …)`, and `(static …)` wrapping either.
+
 ## Challenge 3 — how open should fields be?
 
 The prose challenge: Lox lets any code read or write any field, as Python and
@@ -312,9 +369,8 @@ env GOTOOLCHAIN=go1.26.6 go run . -print=ast examples/classes.lox
 
 ## Scope boundary
 
-Challenge 1 is implemented, without metaclasses — see above for why. Challenge 3
-is answered above. Challenge 2, getter methods, is still open; there is a sketch
-in the [learning plan](12-learning-plan.md#challenges).
+All three challenges are done: challenge 1 without metaclasses and challenge 2
+with a flag on the AST, both for reasons above, and challenge 3 in prose.
 
 Chapter 13 adds inheritance, and two things in this chapter are where it will
 push. `super` needs a second synthetic scope, which means the class scope stops

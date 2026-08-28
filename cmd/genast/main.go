@@ -160,11 +160,12 @@ var stmts = hierarchy{
 		},
 		{
 			Name: "Function",
-			Doc:  "Function binds Name to a callable with Params and Body.",
+			Doc:  "Function binds Name to a callable with Params and Body.\n\nIsGetter marks a class body member declared without a parameter list, whose\nbody runs on property access rather than on a call. The flag has to live on\nthe node because a getter and a zero-parameter method are otherwise\nidentical here: both have no Params.",
 			Fields: []field{
 				{"Name", "token.Token"},
 				{"Params", "[]token.Token"},
 				{"Body", "[]Stmt"},
+				{"IsGetter", "bool"},
 			},
 		},
 		{

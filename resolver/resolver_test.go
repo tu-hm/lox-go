@@ -518,3 +518,30 @@ func TestResolverAcceptsThisInAClassMethod(t *testing.T) {
 		})
 	}
 }
+
+// TestResolverRejectsAnInitializerGetter is challenge 2's one static rule. An
+// initializer has to stay callable — construction calls it with the class's
+// arguments — and a getter cannot be called at all.
+func TestResolverRejectsAnInitializerGetter(t *testing.T) {
+	defer loxerrors.Reset()
+	loxerrors.Reset()
+
+	errs, _ := resolveSource(t, `class C { init { this.a = 1; } }`)
+	if len(errs) != 1 {
+		t.Fatalf("errors = %v, want exactly one", errs)
+	}
+	var resolveErr *loxerrors.ResolveError
+	if !stderrors.As(errs[0], &resolveErr) {
+		t.Fatalf("error = %T %v, want *ResolveError", errs[0], errs[0])
+	}
+	want := "Can't declare an initializer as a getter."
+	if resolveErr.Message != want || resolveErr.Token.Lexeme != "init" {
+		t.Errorf("error = %q at %q, want %q at \"init\"", resolveErr.Message, resolveErr.Token.Lexeme, want)
+	}
+
+	// A class-method getter named init is fine: it is not a constructor.
+	loxerrors.Reset()
+	if errs, _ := resolveSource(t, `class C { class init { return 1; } }`); len(errs) != 0 {
+		t.Errorf("errors = %v, want none", errs)
+	}
+}

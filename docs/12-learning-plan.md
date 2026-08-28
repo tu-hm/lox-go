@@ -21,6 +21,8 @@ By the end, you should be able to:
 7. Explain why a field shadows a method and not the reverse.
 8. Say what makes `init` special and what does not.
 9. Explain why the book's define-then-assign for a class name would fail here.
+10. Say why the getter flag has to be recorded at parse time and cannot be
+    recovered from the tree.
 
 Use this command prefix in the current environment:
 
@@ -264,7 +266,7 @@ static one a script gets. Both come from the same design decision. Which one?
    Checkpoint: `lookUpProperty` takes `findMethod` as a function rather than a
    map. Nothing today needs that. What in chapter 13 will?
 
-2. **Open** — getter methods, whose body runs on property access:
+2. **Implemented** — getter methods, whose body runs on property access:
 
    ```lox
    class Circle {
@@ -274,15 +276,28 @@ static one a script gets. Both come from the same design decision. Which one?
    print Circle(4).area;
    ```
 
-   Inside a class body the parameter list becomes optional: a `{` straight after
-   the name is a getter. A getter and a zero-argument method are otherwise
-   indistinguishable in the tree, so the flag has to live on the AST —
-   `IsGetter bool` on `ast.Function`, mirroring how `LoxFunction` already
-   carries `isInitializer`.
+   Read [the chapter notes](12-classes.md#challenge-2--getters) for why the flag
+   has to live on the AST and what signature had to change.
 
-   Two decisions it forces: `LoxInstance.get` needs the interpreter in order to
-   invoke the body, so its signature changes; and `init` declared as a getter has
-   to be rejected, because it must stay callable.
+   Before that: predict each of these, and say which phase reports any failure.
+
+   ```lox
+   class C { v { return 1; } } print C().v;
+   class C { v { return 1; } } print C().v();
+   class C { v { return 1; } } var c = C(); c.v = 2; print c.v;
+   class C { g { return "g"; } m() { return "m"; } } print C().g; print C().m();
+   class C { init { this.a = 1; } }
+   class C { class init { return 1; } } print C.init;
+   fun f { return 1; }
+   ```
+
+   Then read `lookUpProperty` in
+   [`interpreter/instance.go`](../interpreter/instance.go) again, and note that
+   the getter call happens *inside* the fields-then-methods rule.
+
+   Checkpoint: a getter is invoked during the property read, so
+   `TestGetterErrorsPropagate` asserts the error surfaces at the read. What
+   would have to be true for it to surface anywhere else?
 
 3. **Answered in prose** — how open should field access be? See
    [the chapter notes](12-classes.md#challenge-3--how-open-should-fields-be).

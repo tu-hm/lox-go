@@ -199,7 +199,7 @@ func (p *Parser) classDeclaration() (ast.Stmt, error) {
 		if onTheClass {
 			p.advance()
 		}
-		method, err := p.function("method")
+		method, err := p.functionBody("method", true)
 		if err != nil {
 			return nil, err
 		}
@@ -217,10 +217,26 @@ func (p *Parser) classDeclaration() (ast.Stmt, error) {
 }
 
 func (p *Parser) function(kind string) (*ast.Function, error) {
+	return p.functionBody(kind, false)
+}
+
+// functionBody parses the `function` rule. allowGetter makes the parameter list
+// optional, which is legal only inside a class body: a `{` straight after the
+// name means the member is a getter, and its body runs on property access.
+func (p *Parser) functionBody(kind string, allowGetter bool) (*ast.Function, error) {
 	name, err := p.consume(token.IDENTIFIER, "Expect "+kind+" name.")
 	if err != nil {
 		return nil, err
 	}
+
+	if allowGetter && p.check(token.LEFT_BRACE) {
+		body, err := p.blockStatements()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.Function{Name: name, Body: body, IsGetter: true}, nil
+	}
+
 	if _, err := p.consume(token.LEFT_PAREN, "Expect '(' after "+kind+" name."); err != nil {
 		return nil, err
 	}
@@ -249,6 +265,17 @@ func (p *Parser) function(kind string) (*ast.Function, error) {
 	if !p.check(token.LEFT_BRACE) {
 		return nil, errors.ParseErrorAt(p.peek(), "Expect '{' before "+kind+" body.")
 	}
+	body, err := p.blockStatements()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.Function{Name: name, Params: params, Body: body}, nil
+}
+
+// blockStatements parses a body and unwraps it. A body is a block as far as the
+// orchestration layer is concerned, but ast.Function stores the statements
+// directly, so the assertion happens once here rather than at each caller.
+func (p *Parser) blockStatements() ([]ast.Stmt, error) {
 	body, err := p.block()
 	if err != nil {
 		return nil, err
@@ -257,7 +284,7 @@ func (p *Parser) function(kind string) (*ast.Function, error) {
 	if !ok {
 		return nil, fmt.Errorf("llk: internal error: function body produced %T, want *ast.Block", body)
 	}
-	return &ast.Function{Name: name, Params: params, Body: block.Statements}, nil
+	return block.Statements, nil
 }
 
 func (p *Parser) statement() (ast.Stmt, error) {
