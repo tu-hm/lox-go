@@ -75,8 +75,19 @@ func (p *Parser) declarationRecovering() ast.Stmt {
 }
 
 func (p *Parser) declaration() (ast.Stmt, error) {
+	if p.match(token.CLASS) {
+		return p.classDeclaration()
+	}
 	if p.match(token.FUN) {
-		return p.function("function")
+		// Assigned rather than returned directly: function returns a typed
+		// *ast.Function, and returning that as an ast.Stmt on the error path
+		// would produce a non-nil interface holding a nil pointer, which
+		// declarationRecovering's nil check would wave through.
+		function, err := p.function("function")
+		if err != nil {
+			return nil, err
+		}
+		return function, nil
 	}
 	if p.match(token.VAR) {
 		return p.varDeclaration()
@@ -84,7 +95,34 @@ func (p *Parser) declaration() (ast.Stmt, error) {
 	return p.statement()
 }
 
-func (p *Parser) function(kind string) (ast.Stmt, error) {
+// classDeclaration parses a class body as a list of methods. A method is
+// exactly the `function` rule without the leading `fun`: the keyword is
+// redundant inside a class body, so the grammar drops it.
+func (p *Parser) classDeclaration() (ast.Stmt, error) {
+	name, err := p.consume(token.IDENTIFIER, "Expect class name.")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.consume(token.LEFT_BRACE, "Expect '{' before class body."); err != nil {
+		return nil, err
+	}
+
+	var methods []*ast.Function
+	for !p.check(token.RIGHT_BRACE) && !p.isAtEnd() {
+		method, err := p.function("method")
+		if err != nil {
+			return nil, err
+		}
+		methods = append(methods, method)
+	}
+
+	if _, err := p.consume(token.RIGHT_BRACE, "Expect '}' after class body."); err != nil {
+		return nil, err
+	}
+	return &ast.Class{Name: name, Methods: methods}, nil
+}
+
+func (p *Parser) function(kind string) (*ast.Function, error) {
 	name, err := p.consume(token.IDENTIFIER, "Expect "+kind+" name.")
 	if err != nil {
 		return nil, err
@@ -391,8 +429,15 @@ func (p *Parser) assignment() (ast.Expr, error) {
 			return nil, err
 		}
 
-		if variable, ok := expr.(*ast.Variable); ok {
-			return &ast.Assign{Name: variable.Name, Value: value}, nil
+		// The left side was already parsed as an ordinary expression; which
+		// assignment node it becomes is decided by what it turned out to be.
+		// That one-token-of-hindsight trick is why property assignment needs no
+		// backtracking.
+		switch target := expr.(type) {
+		case *ast.Variable:
+			return &ast.Assign{Name: target.Name, Value: value}, nil
+		case *ast.Get:
+			return &ast.Set{Object: target.Object, Name: target.Name, Value: value}, nil
 		}
 		return nil, errorAt(equals, "Invalid assignment target.")
 	}
@@ -539,13 +584,25 @@ func (p *Parser) call() (ast.Expr, error) {
 		return nil, err
 	}
 
-	for p.match(token.LEFT_PAREN) {
-		expr, err = p.finishCall(expr)
-		if err != nil {
-			return nil, err
+	// Calls and property accesses are both postfix and bind equally tightly, so
+	// they interleave freely: egg.scramble(3).with(cheese).
+	for {
+		switch {
+		case p.match(token.LEFT_PAREN):
+			expr, err = p.finishCall(expr)
+			if err != nil {
+				return nil, err
+			}
+		case p.match(token.DOT):
+			name, err := p.consume(token.IDENTIFIER, "Expect property name after '.'.")
+			if err != nil {
+				return nil, err
+			}
+			expr = &ast.Get{Object: expr, Name: name}
+		default:
+			return expr, nil
 		}
 	}
-	return expr, nil
 }
 
 func (p *Parser) finishCall(callee ast.Expr) (ast.Expr, error) {
@@ -584,6 +641,8 @@ func (p *Parser) primary() (ast.Expr, error) {
 
 	case p.match(token.NUMBER, token.STRING):
 		return &ast.Literal{Value: p.previous().Literal}, nil
+	case p.match(token.THIS):
+		return &ast.This{Keyword: p.previous()}, nil
 	case p.match(token.IDENTIFIER):
 		return &ast.Variable{Name: p.previous()}, nil
 

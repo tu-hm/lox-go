@@ -1,0 +1,130 @@
+// Chapter 12 — classes.
+//
+// Three things arrive together here, and it is worth keeping them apart: a
+// class is a value you can call, an instance is a bag of fields you can write
+// to, and a method is a function that knows which instance found it.
+
+// A class is an ordinary value bound to an ordinary name. Calling it is what
+// makes an instance — the class object is the constructor.
+class Bagel {
+  topping() {
+    return "everything";
+  }
+}
+
+print Bagel;        // Bagel — the class itself
+var bagel = Bagel();
+print bagel;        // Bagel instance
+
+// Fields are not declared anywhere. Assigning one is what makes it exist, and
+// the assignment is an expression that evaluates to the value stored.
+print bagel.flavor = "plain"; // plain
+print bagel.flavor;           // plain
+
+// A field shadows a method of the same name. That is a deliberate design
+// choice, not an accident of the lookup order: a field holding a function has
+// to be callable exactly like a method, so the two share one namespace.
+print bagel.topping();        // everything — the method
+bagel.topping = "shadowed";
+print bagel.topping;          // shadowed — the field now wins
+
+// `this` is the receiver, and it is bound when the method is *found*, not when
+// it is called. That is what lets a method be pulled out into a variable and
+// still know which instance it belongs to.
+class Person {
+  init(name) {
+    this.name = name;
+  }
+
+  sayName() {
+    print this.name;
+  }
+}
+
+var jane = Person("Jane");
+var bill = Person("Bill");
+
+var method = jane.sayName;
+method();                     // Jane — nothing at this call site says "jane"
+
+// The same value handed to a function that knows nothing about receivers.
+fun callTwice(f) {
+  f();
+  f();
+}
+callTwice(bill.sayName);       // Bill, Bill
+
+// The binding captured the instance, not the field's value at the time.
+jane.name = "Renamed";
+method();                     // Renamed
+
+// init() is a method with a name the runtime knows. It runs on construction and
+// always evaluates to the instance, even when called directly afterwards, and
+// even when it exits early through a bare `return`.
+class Point {
+  init(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+
+  sum() {
+    return this.x + this.y;
+  }
+}
+
+var point = Point(1, 2);
+print point.sum();            // 3
+print point.init(10, 20).sum(); // 30 — init hands back the instance
+print point.init(0, 0) == point; // true — and it is the same one
+
+// `this` survives being nested. Inside the closure below it is two environments
+// out: one for the closure's own body, one for the method's, and the class
+// scope holding `this` beyond that. The resolver counts those hops from the
+// text, so the closure finds the right receiver however deep it sits.
+class Thing {
+  init() {
+    this.name = "thing";
+  }
+
+  makeReader() {
+    var prefix = "read ";
+    fun read() {
+      return prefix + this.name;
+    }
+    return read;
+  }
+}
+
+print Thing().makeReader()(); // read thing
+
+// A class declared inside a function is a local like any other, and its methods
+// can name it: the binding is complete before any method can run.
+fun makeCounter() {
+  class Counter {
+    init() { this.count = 0; }
+    bump() {
+      this.count = this.count + 1;
+      return this.count;
+    }
+    copy() { return Counter(); }
+  }
+  return Counter();
+}
+
+var counter = makeCounter();
+counter.bump();
+print counter.bump();         // 2
+print counter.copy().bump();  // 1 — a fresh instance, independent state
+
+// Each of these is refused before the program runs. Uncomment one to see it:
+//
+//   print this;                            Can't use 'this' outside of a class.
+//   fun f() { return this; }               Can't use 'this' outside of a class.
+//   class C { init() { return 1; } }       Can't return a value from an initializer.
+//
+// And each of these is a runtime error, because whether a property exists is
+// not a question the text can answer:
+//
+//   print "text".length;                   Only instances have properties.
+//   var n = 1; n.field = 2;                Only instances have fields.
+//   class C {} print C().missing;          Undefined property 'missing'.

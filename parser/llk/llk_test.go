@@ -56,7 +56,7 @@ func TestFirstSet(t *testing.T) {
 
 	want := []token.TokenType{
 		token.NUMBER, token.STRING, token.TRUE, token.FALSE, token.NIL,
-		token.IDENTIFIER, token.LEFT_PAREN, token.MINUS, token.BANG,
+		token.THIS, token.IDENTIFIER, token.LEFT_PAREN, token.MINUS, token.BANG,
 	}
 	for _, tt := range want {
 		if !s.first[nExpression].has(seq{tt}) {
@@ -722,6 +722,112 @@ func TestFunctionParameterAndArgumentLimitsForEveryK(t *testing.T) {
 		}
 		if !errors.HadError {
 			t.Errorf("k=%d: 256 arguments did not report an error", k)
+		}
+	}
+}
+
+// TestClassesAndPropertiesForEveryK mirrors the recursive-descent parser's
+// class tests. The `.` suffix is a table production here rather than a loop, so
+// the interesting property is that mkGet folds before the recursive tail and
+// a.b.c still nests from the left.
+func TestClassesAndPropertiesForEveryK(t *testing.T) {
+	defer errors.Reset()
+
+	for k := MinK; k <= MaxK; k++ {
+		for source, want := range map[string]string{
+			"egg.scramble":         "(. egg scramble)",
+			"a.b.c":                "(. (. a b) c)",
+			"a.b.c.d":              "(. (. (. a b) c) d)",
+			"egg.scramble(3).with": "(. (call (. egg scramble) 3) with)",
+			"this.field":           "(. this field)",
+			"this":                 "this",
+		} {
+			expr, err := parserFor(t, source, k).Parse()
+			if err != nil {
+				t.Fatalf("k=%d Parse(%q): %v", k, source, err)
+			}
+			if got := (&ast.Printer{}).Print(expr); got != want {
+				t.Errorf("k=%d Parse(%q) = %s, want %s", k, source, got, want)
+			}
+		}
+
+		statements, errs := parserFor(t, `
+			class Breakfast {
+				init(meat) { this.meat = meat; }
+				serve(who) { return this.meat + who; }
+			}
+			point.x = 1;
+		`, k).ParseProgram()
+		if len(errs) != 0 {
+			t.Fatalf("k=%d ParseProgram: %v", k, errs)
+		}
+		want := []string{
+			"(class Breakfast " +
+				"(fun init (meat) (block (expr (.= this meat meat)))) " +
+				"(fun serve (who) (block (return (+ (. this meat) who)))))",
+			"(expr (.= point x 1))",
+		}
+		got := renderProgram(statements)
+		if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+			t.Errorf("k=%d ParseProgram = %v, want %v", k, got, want)
+		}
+	}
+}
+
+func TestClassAndPropertyErrorsForEveryK(t *testing.T) {
+	defer errors.Reset()
+
+	for k := MinK; k <= MaxK; k++ {
+		// Class bodies are parsed by the orchestration layer, so their messages
+		// come from consume and are the same at every k. The '.' suffix is a
+		// table production, so its messages are not — see below.
+		for source, want := range map[string]string{
+			"class {}":            "Expect class name.",
+			"class C":             "Expect '{' before class body.",
+			"class C {":           "Expect '}' after class body.",
+			"class C { method }":  "Expect '(' after method name.",
+			"egg.scramble() = 1;": "Invalid assignment target.",
+		} {
+			_, errs := parserFor(t, source, k).ParseProgram()
+			if len(errs) == 0 {
+				t.Errorf("k=%d ParseProgram(%q) returned no error", k, source)
+				continue
+			}
+			if parseErr, ok := errs[0].(*errors.ParseError); !ok || parseErr.Message != want {
+				t.Errorf("k=%d ParseProgram(%q) error = %v, want %q", k, source, errs[0], want)
+			}
+		}
+	}
+}
+
+// TestPropertyNameErrorMovesWithK pins the cost of the table, rather than
+// hiding it. `egg.;` is rejected at every k, but not by the same rule:
+//
+//	k=1  callTail predicts the '.' production, matches '.', then IDENTIFIER
+//	     fails — "Expect property name after '.'.", the same message
+//	     recursive descent gives.
+//	k=2  the window is `. ;`. No callTail production predicts it and neither
+//	     does ε, so the failure is one step earlier, at callTail itself.
+//	k=3  the window reaches back far enough that `call` itself cannot be
+//	     predicted, and the error lands on the whole expression.
+//
+// Wider lookahead notices the same mistake sooner and therefore describes it
+// less specifically. That is the trade docs/llk-parser.md argues about, and it
+// is why DefaultK is 1.
+func TestPropertyNameErrorMovesWithK(t *testing.T) {
+	defer errors.Reset()
+
+	for k, want := range map[int]string{
+		1: "Expect property name after '.'.",
+		2: "Expect end of expression.",
+		3: "Expect expression.",
+	} {
+		_, errs := parserFor(t, "egg.;", k).ParseProgram()
+		if len(errs) == 0 {
+			t.Fatalf("k=%d: no error for %q", k, "egg.;")
+		}
+		if parseErr, ok := errs[0].(*errors.ParseError); !ok || parseErr.Message != want {
+			t.Errorf("k=%d error = %v, want %q", k, errs[0], want)
 		}
 	}
 }

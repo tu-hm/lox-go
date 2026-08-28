@@ -18,9 +18,12 @@ type ExprVisitor interface {
 	VisitAssignExpr(e *Assign) any
 	VisitBinaryExpr(e *Binary) any
 	VisitCallExpr(e *Call) any
+	VisitGetExpr(e *Get) any
 	VisitGroupingExpr(e *Grouping) any
 	VisitLiteralExpr(e *Literal) any
 	VisitLogicalExpr(e *Logical) any
+	VisitSetExpr(e *Set) any
+	VisitThisExpr(e *This) any
 	VisitUnaryExpr(e *Unary) any
 	VisitVariableExpr(e *Variable) any
 }
@@ -54,6 +57,16 @@ type Call struct {
 func (e *Call) Accept(v ExprVisitor) any { return v.VisitCallExpr(e) }
 func (e *Call) isExpr()                  {}
 
+// Get reads the property Name from the instance Object evaluates to.
+// Name is a property, not a variable: nothing resolves it statically.
+type Get struct {
+	Object Expr
+	Name   token.Token
+}
+
+func (e *Get) Accept(v ExprVisitor) any { return v.VisitGetExpr(e) }
+func (e *Get) isExpr()                  {}
+
 // Grouping is a parenthesised expression. It survives into the tree because
 // it changes precedence, and the interpreter must not re-associate across it.
 type Grouping struct {
@@ -81,6 +94,26 @@ type Logical struct {
 
 func (e *Logical) Accept(v ExprVisitor) any { return v.VisitLogicalExpr(e) }
 func (e *Logical) isExpr()                  {}
+
+// Set stores Value in the property Name of the instance Object evaluates to,
+// and evaluates to Value. A field springs into existence on first write.
+type Set struct {
+	Object Expr
+	Name   token.Token
+	Value  Expr
+}
+
+func (e *Set) Accept(v ExprVisitor) any { return v.VisitSetExpr(e) }
+func (e *Set) isExpr()                  {}
+
+// This reads the receiver of the enclosing method. Keyword locates the
+// "outside of a class" error, and is also the name the resolver binds.
+type This struct {
+	Keyword token.Token
+}
+
+func (e *This) Accept(v ExprVisitor) any { return v.VisitThisExpr(e) }
+func (e *This) isExpr()                  {}
 
 // Unary is a prefix operation: Operator Right.
 type Unary struct {

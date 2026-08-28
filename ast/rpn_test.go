@@ -125,3 +125,57 @@ func TestBothVisitorsOverOneTree(t *testing.T) {
 		t.Errorf("RPNPrinter = %q, want %q", got, want)
 	}
 }
+
+// TestRPNPrinterRendersClassNodes: the property name goes where Assign puts the
+// variable name — after the operands — so `.` and `.=` read as postfix
+// operators like everything else in this notation.
+func TestRPNPrinterRendersClassNodes(t *testing.T) {
+	t.Parallel()
+
+	this := ast.Expr(&ast.This{Keyword: op(token.THIS, "this")})
+	p := &ast.RPNPrinter{}
+
+	tests := []struct {
+		name string
+		expr ast.Expr
+		want string
+	}{
+		{"this", this, "this"},
+		{
+			"property read",
+			&ast.Get{Object: &ast.Variable{Name: op(token.IDENTIFIER, "egg")}, Name: op(token.IDENTIFIER, "scramble")},
+			"egg scramble .",
+		},
+		{
+			"chained reads",
+			&ast.Get{
+				Object: &ast.Get{Object: &ast.Variable{Name: op(token.IDENTIFIER, "a")}, Name: op(token.IDENTIFIER, "b")},
+				Name:   op(token.IDENTIFIER, "c"),
+			},
+			"a b . c .",
+		},
+		{
+			"property write",
+			&ast.Set{Object: this, Name: op(token.IDENTIFIER, "flavor"), Value: str("plain")},
+			"this plain flavor .=",
+		},
+		{
+			"property write whose value is itself a read",
+			&ast.Set{
+				Object: this,
+				Name:   op(token.IDENTIFIER, "total"),
+				Value:  binary(&ast.Get{Object: this, Name: op(token.IDENTIFIER, "total")}, token.PLUS, "+", num(1)),
+			},
+			"this this total . 1 + total .=",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := p.Print(tt.expr); got != tt.want {
+				t.Errorf("RPN Print() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

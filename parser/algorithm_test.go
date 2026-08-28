@@ -136,6 +136,14 @@ func TestAlgorithmsAgreeOnPrograms(t *testing.T) {
 		`fun add(a, b) { return a + b; } print add(1, 2);`,
 		`fun outer(a) { fun inner(b) { return a + b; } return inner; }`,
 		`return; return 1;`,
+		`class C {}`,
+		`class C { m() { return 1; } }`,
+		`class C { init(a) { this.a = a; } get() { return this.a; } }`,
+		`print a.b.c;`,
+		`a.b.c = d.e;`,
+		`print egg.scramble(3).with;`,
+		`print this;`,
+		`class C { }`,
 	}
 
 	for _, src := range programs {

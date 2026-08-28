@@ -36,6 +36,21 @@ func (p *Printer) VisitCallExpr(e *Call) any {
 	return p.parenthesize("call", exprs...)
 }
 
+// VisitGetExpr and VisitSetExpr spell the property name inline rather than as a
+// subexpression, because it is not one: nothing evaluates it, and no visitor
+// may recurse into it.
+func (p *Printer) VisitGetExpr(e *Get) any {
+	return "(. " + p.Print(e.Object) + " " + e.Name.Lexeme + ")"
+}
+
+func (p *Printer) VisitSetExpr(e *Set) any {
+	return "(.= " + p.Print(e.Object) + " " + e.Name.Lexeme + " " + p.Print(e.Value) + ")"
+}
+
+func (p *Printer) VisitThisExpr(e *This) any {
+	return e.Keyword.Lexeme
+}
+
 func (p *Printer) VisitGroupingExpr(e *Grouping) any {
 	return p.parenthesize("group", e.Expression)
 }

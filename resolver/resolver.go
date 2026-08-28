@@ -29,6 +29,7 @@ type Resolver struct {
 	// at a time.
 	scopes          []*scope
 	currentFunction functionType
+	currentClass    classType
 	errs            []error
 	warnings        []*errors.Warning
 }
@@ -40,14 +41,27 @@ var (
 	_ ast.StmtVisitor = (*Resolver)(nil)
 )
 
-// functionType records whether the pass is currently inside a function body,
-// which is all "Can't return from top-level code." needs to know. Chapter 12
-// adds methods and initializers to this set.
+// functionType records what kind of body the pass is currently inside. It
+// started as "is there a function at all", for "Can't return from top-level
+// code."; a method is a function for that purpose, and an initializer is a
+// function that may not return a value.
 type functionType int
 
 const (
 	functionNone functionType = iota
 	functionFunction
+	functionMethod
+	functionInitializer
+)
+
+// classType is the same question one level up, and exists for exactly one
+// diagnostic: `this` outside any class. A bare currentClass flag would do
+// today, but chapter 13 adds a third state for a class with a superclass.
+type classType int
+
+const (
+	classNone classType = iota
+	classClass
 )
 
 // bindingKind is what a name was declared as. It only affects diagnostics: how
@@ -57,13 +71,22 @@ type bindingKind int
 const (
 	bindingVariable bindingKind = iota
 	bindingFunction
+	bindingClass
 	bindingParameter
+	// bindingThis is the implicit receiver. It occupies a real slot like any
+	// other binding, because the interpreter addresses it like any other
+	// binding — but the source never wrote it, so it is exempt from the unused
+	// check. Without that exemption every class whose methods ignore `this`
+	// would warn.
+	bindingThis
 )
 
 func (k bindingKind) String() string {
 	switch k {
 	case bindingFunction:
 		return "function"
+	case bindingClass:
+		return "class"
 	case bindingParameter:
 		return "parameter"
 	default:
@@ -138,8 +161,9 @@ func (r *Resolver) endScope() {
 	for _, b := range closing.order {
 		// A parameter is exempt: its presence is dictated by the caller's
 		// signature rather than by the body, and Lox has no way to spell
-		// "deliberately unused". Go draws the line in the same place.
-		if b.kind == bindingParameter || b.read {
+		// "deliberately unused". Go draws the line in the same place. `this` is
+		// exempt because the source never declared it at all.
+		if b.kind == bindingParameter || b.kind == bindingThis || b.read {
 			continue
 		}
 		r.warn(b.name, "Local "+b.kind.String()+" '"+b.name.Lexeme+"' is never used.")
@@ -220,6 +244,42 @@ func (r *Resolver) VisitVarStmt(stmt *ast.Var) any {
 	return nil
 }
 
+// VisitClassStmt opens one scope per class, holding nothing but `this`.
+//
+// That scope is the pass's half of a bargain with the runtime: it is what
+// LoxFunction.bind creates, and `this` is the sole binding in it, so `this`
+// lives at slot 0 and a method body finds it one hop out. Declaring it here
+// rather than special-casing it in the interpreter is what lets `this` be read
+// through the same slot-addressed path as every other local — this
+// implementation's local environments hold no names to look up.
+//
+// Method names are deliberately not declared. A method is reached through its
+// class's method map, never through a scope, so there is no binding to make and
+// no unused-method warning to give.
+func (r *Resolver) VisitClassStmt(stmt *ast.Class) any {
+	enclosing := r.currentClass
+	r.currentClass = classClass
+	defer func() { r.currentClass = enclosing }()
+
+	r.declare(stmt.Name, bindingClass)
+	r.define(stmt.Name)
+
+	r.beginScope()
+	this := token.Token{Type: token.THIS, Lexeme: "this", Line: stmt.Name.Line}
+	r.declare(this, bindingThis)
+	r.define(this)
+
+	for _, method := range stmt.Methods {
+		kind := functionMethod
+		if method.Name.Lexeme == "init" {
+			kind = functionInitializer
+		}
+		r.resolveFunction(method, kind)
+	}
+	r.endScope()
+	return nil
+}
+
 // VisitFunctionStmt defines the function's own name before resolving its body,
 // so the body can refer to the function and recurse.
 func (r *Resolver) VisitFunctionStmt(stmt *ast.Function) any {
@@ -272,6 +332,12 @@ func (r *Resolver) VisitReturnStmt(stmt *ast.Return) any {
 	if r.currentFunction == functionNone {
 		r.fail(stmt.Keyword, "Can't return from top-level code.")
 	}
+	// A bare `return;` stays legal in an initializer: it is an early exit, and
+	// the runtime still hands back the instance. Only naming a value is an
+	// error, because construction has no other answer to give.
+	if r.currentFunction == functionInitializer && stmt.Value != nil {
+		r.fail(stmt.Keyword, "Can't return a value from an initializer.")
+	}
 	if stmt.Value != nil {
 		r.resolveExpr(stmt.Value)
 	}
@@ -319,6 +385,33 @@ func (r *Resolver) VisitCallExpr(e *ast.Call) any {
 	for _, argument := range e.Arguments {
 		r.resolveExpr(argument)
 	}
+	return nil
+}
+
+// VisitGetExpr and VisitSetExpr resolve the object and stop. A property name is
+// not a variable: it names a slot on an object that may not exist until the
+// line runs, so there is nothing static to bind it to. That is the whole reason
+// property access stays a dynamic lookup while variable access does not.
+func (r *Resolver) VisitGetExpr(e *ast.Get) any {
+	r.resolveExpr(e.Object)
+	return nil
+}
+
+func (r *Resolver) VisitSetExpr(e *ast.Set) any {
+	r.resolveExpr(e.Value)
+	r.resolveExpr(e.Object)
+	return nil
+}
+
+// VisitThisExpr resolves `this` as the local variable the class scope declared.
+// Outside a class there is no such scope, and resolving anyway would quietly
+// turn it into a global lookup that fails much later with a worse message.
+func (r *Resolver) VisitThisExpr(e *ast.This) any {
+	if r.currentClass == classNone {
+		r.fail(e.Keyword, "Can't use 'this' outside of a class.")
+		return nil
+	}
+	r.resolveLocal(e, e.Keyword, useRead)
 	return nil
 }
 

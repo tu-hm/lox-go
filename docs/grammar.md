@@ -3,7 +3,7 @@
 Canonical copy of the grammar. Every chapter from here to the end of the book
 edits this file — chapter 6 rewrites the `expression` rule into a precedence
 ladder, chapter 8 adds statements, chapter 9 adds control flow, and chapter 10
-adds calls and user-defined functions.
+adds calls and user-defined functions, and chapter 12 adds classes.
 
 ## Chapter 5 — expressions (ambiguous)
 
@@ -182,6 +182,80 @@ because an unused variable cannot make a program behave wrongly.
 Each is checked over the tree, not the token stream, which is why both front ends
 get them for free. See [Chapter 11 — resolving and binding](11-resolving-and-binding.md).
 
+## Chapter 12 — classes
+
+Chapter 12 adds one declaration form, one postfix expression suffix, and one
+keyword. The suffix is the interesting one: `.` joins `(` on the *same* rung of
+the ladder, which is what makes `egg.scramble(3).with` parse without any rule
+about how the two interleave.
+
+```
+program        → declaration* EOF ;
+declaration    → classDecl | funDecl | varDecl | statement ;
+classDecl      → "class" IDENTIFIER "{" function* "}" ;
+funDecl        → "fun" function ;
+function       → IDENTIFIER "(" parameters? ")" block ;
+parameters     → IDENTIFIER ( "," IDENTIFIER )* ;
+statement      → exprStmt | forStmt | ifStmt | printStmt
+               | returnStmt | whileStmt | block ;
+block          → "{" declaration* "}" ;
+varDecl        → "var" IDENTIFIER ( "=" expression )? ";" ;
+ifStmt         → "if" "(" expression ")" statement
+                 ( "else" statement )? ;
+whileStmt      → "while" "(" expression ")" statement ;
+forStmt        → "for" "(" ( varDecl | exprStmt | ";" )
+                 expression? ";" expression? ")" statement ;
+printStmt      → "print" expression ";" ;
+returnStmt     → "return" expression? ";" ;
+exprStmt       → expression ";" ;
+
+expression     → assignment ;
+assignment     → ( call "." )? IDENTIFIER "=" assignment | logic_or ;
+logic_or       → logic_and ( "or" logic_and )* ;
+logic_and      → equality ( "and" equality )* ;
+equality       → comparison ( ( "!=" | "==" ) comparison )* ;
+comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+term           → factor ( ( "-" | "+" ) factor )* ;
+factor         → unary ( ( "/" | "*" ) unary )* ;
+unary          → ( "!" | "-" ) unary | call ;
+call           → primary ( "(" arguments? ")" | "." IDENTIFIER )* ;
+arguments      → expression ( "," expression )* ;
+primary        → NUMBER | STRING | "true" | "false" | "nil" | "this"
+               | "(" expression ")" | IDENTIFIER ;
+```
+
+A method reuses the `function` rule without the `fun` keyword: inside a class
+body the keyword carries no information, so the grammar drops it. `init` is not
+a terminal anywhere — it is an ordinary identifier that the *interpreter*
+treats specially, which is why `class C { initialize() {} }` is a plain method.
+
+The `assignment` rule is written the way the book writes it, but neither front
+end implements it literally. Both parse the left side as an ordinary
+expression and then decide, from what it turned out to be, which node to build:
+
+```
+Variable  →  Assign      a = 1
+Get       →  Set         a.b = 1
+anything else            Invalid assignment target.
+```
+
+That one-token-of-hindsight trick is the same one chapter 8 introduced for
+plain assignment, and it is why property assignment needs no backtracking and
+no extra lookahead.
+
+Three rules the notation still cannot state, all enforced by the resolver:
+
+```
+Can't use 'this' outside of a class.            a This expression with no enclosing class
+Can't return a value from an initializer.       returnStmt with a value inside init()
+Local class 'C' is never used.                  a class binding nothing reads (a warning)
+```
+
+A property name is a terminal in the grammar but not a variable in the tree:
+nothing resolves it, because which properties an object has depends on which
+lines ran. That split — variables static, properties dynamic — is the whole
+subject of [Chapter 12 — classes](12-classes.md).
+
 ## The LL(k) form — what the table-driven parser reads
 
 `parser/llk` parses the same language from the same grammar written differently,
@@ -281,6 +355,33 @@ Return statements remain table-driven leaf statements. Function declarations
 stay in the orchestration layer because their bodies may contain recoverable
 declarations and compound statements that intentionally sit outside the table.
 
+Chapter 12 adds one production to `callTail` and one to `primary`:
+
+```
+callTail       → "(" arguments ")" {mkCall} callTail
+               | "." IDENTIFIER {mkGet} callTail
+               | ε ;
+primary        → ... | "this" {mkThis} ;
+```
+
+Prediction stays LL(1): the three `callTail` productions begin with `(`, `.`,
+and ε, which are disjoint. `mkGet` sits before the recursive tail for the same
+reason `mkCall` does, so `a.b.c` folds from the left. `mkAssign` gains the
+`Get → Set` case and keeps rejecting everything else.
+
+Class declarations join function declarations in the orchestration layer: a
+class body is a repetition of a rule whose own body contains recoverable
+declarations, which is exactly what that layer is for.
+
+One visible cost of the table shows up here. `egg.;` is rejected at every `k`,
+but not by the same rule — at `k=1` the `.` production is predicted and the
+`IDENTIFIER` match fails, giving the specific "Expect property name after
+'.'."; at `k=2` the window `. ;` matches no production of `callTail` at all, so
+the failure is one step earlier and the message more generic. Wider lookahead
+notices the same mistake sooner and therefore describes it less precisely.
+`TestPropertyNameErrorMovesWithK` pins all three messages rather than hiding
+the difference.
+
 ## Notation
 
 - `→` separates a rule head from its body; `;` ends the rule.
@@ -302,7 +403,11 @@ declarations and compound statements that intentionally sit outside the table.
 | logical operator | `Logical` | `Left Expr`, `Operator token.Token`, `Right Expr` |
 | `unary` | `Unary` | `Operator token.Token`, `Right Expr` |
 | variable access | `Variable` | `Name token.Token` |
+| property read | `Get` | `Object Expr`, `Name token.Token` |
+| property write | `Set` | `Object Expr`, `Name token.Token`, `Value Expr` |
+| `this` | `This` | `Keyword token.Token` |
 | block | `Block` | `Statements []Stmt` |
+| class declaration | `Class` | `Name token.Token`, `Methods []*Function` |
 | expression statement | `Expression` | `Expression Expr` |
 | function declaration | `Function` | `Name token.Token`, `Params []token.Token`, `Body []Stmt` |
 | if statement | `If` | `Condition Expr`, `ThenBranch Stmt`, `ElseBranch Stmt` |

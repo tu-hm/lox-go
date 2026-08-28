@@ -79,6 +79,14 @@ var exprs = hierarchy{
 			},
 		},
 		{
+			Name: "Get",
+			Doc:  "Get reads the property Name from the instance Object evaluates to.\nName is a property, not a variable: nothing resolves it statically.",
+			Fields: []field{
+				{"Object", "Expr"},
+				{"Name", "token.Token"},
+			},
+		},
+		{
 			Name:   "Grouping",
 			Doc:    "Grouping is a parenthesised expression. It survives into the tree because\nit changes precedence, and the interpreter must not re-associate across it.",
 			Fields: []field{{"Expression", "Expr"}},
@@ -96,6 +104,20 @@ var exprs = hierarchy{
 				{"Operator", "token.Token"},
 				{"Right", "Expr"},
 			},
+		},
+		{
+			Name: "Set",
+			Doc:  "Set stores Value in the property Name of the instance Object evaluates to,\nand evaluates to Value. A field springs into existence on first write.",
+			Fields: []field{
+				{"Object", "Expr"},
+				{"Name", "token.Token"},
+				{"Value", "Expr"},
+			},
+		},
+		{
+			Name:   "This",
+			Doc:    "This reads the receiver of the enclosing method. Keyword locates the\n\"outside of a class\" error, and is also the name the resolver binds.",
+			Fields: []field{{"Keyword", "token.Token"}},
 		},
 		{
 			Name: "Unary",
@@ -121,6 +143,14 @@ var stmts = hierarchy{
 			Name:   "Block",
 			Doc:    "Block executes Statements in a nested lexical scope.",
 			Fields: []field{{"Statements", "[]Stmt"}},
+		},
+		{
+			Name: "Class",
+			Doc:  "Class binds Name to a class whose instances carry Methods.\nMethods are *Function rather than Stmt because every consumer wants the\nconcrete node: a method is never executed as a statement.",
+			Fields: []field{
+				{"Name", "token.Token"},
+				{"Methods", "[]*Function"},
+			},
 		},
 		{
 			Name:   "Expression",

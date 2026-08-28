@@ -170,3 +170,106 @@ func TestPrinterIsAnExprVisitor(t *testing.T) {
 		t.Errorf("VisitLiteralExpr() = %#v, want string %q", v.VisitLiteralExpr(&ast.Literal{Value: 1.0}), "1")
 	}
 }
+
+// TestPrinterRendersClassNodes covers the chapter 12 nodes. A property name is
+// spelled inline rather than recursed into, because it is not a subexpression:
+// nothing evaluates it, and a visitor that treated it as one would have to
+// invent an Expr to hold it.
+func TestPrinterRendersClassNodes(t *testing.T) {
+	t.Parallel()
+
+	this := ast.Expr(&ast.This{Keyword: op(token.THIS, "this")})
+
+	tests := []struct {
+		name string
+		expr ast.Expr
+		want string
+	}{
+		{
+			name: "this",
+			expr: this,
+			want: "this",
+		},
+		{
+			name: "property read",
+			expr: &ast.Get{Object: &ast.Variable{Name: op(token.IDENTIFIER, "egg")}, Name: op(token.IDENTIFIER, "scramble")},
+			want: "(. egg scramble)",
+		},
+		{
+			name: "property read on this",
+			expr: &ast.Get{Object: this, Name: op(token.IDENTIFIER, "flavor")},
+			want: "(. this flavor)",
+		},
+		{
+			name: "chained reads nest from the left",
+			expr: &ast.Get{
+				Object: &ast.Get{Object: &ast.Variable{Name: op(token.IDENTIFIER, "a")}, Name: op(token.IDENTIFIER, "b")},
+				Name:   op(token.IDENTIFIER, "c"),
+			},
+			want: "(. (. a b) c)",
+		},
+		{
+			name: "property write",
+			expr: &ast.Set{Object: this, Name: op(token.IDENTIFIER, "flavor"), Value: str("plain")},
+			want: "(.= this flavor plain)",
+		},
+		{
+			name: "property write whose value is itself a read",
+			expr: &ast.Set{
+				Object: this,
+				Name:   op(token.IDENTIFIER, "total"),
+				Value:  binary(&ast.Get{Object: this, Name: op(token.IDENTIFIER, "total")}, token.PLUS, "+", num(1)),
+			},
+			want: "(.= this total (+ (. this total) 1))",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := (&ast.Printer{}).Print(tt.expr); got != tt.want {
+				t.Errorf("Print() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestStmtPrinterRendersAClass: a method prints exactly like a function,
+// because at this point in the book that is what it is — the only difference is
+// where the runtime files it away.
+func TestStmtPrinterRendersAClass(t *testing.T) {
+	t.Parallel()
+
+	class := &ast.Class{
+		Name: op(token.IDENTIFIER, "Point"),
+		Methods: []*ast.Function{
+			{
+				Name:   op(token.IDENTIFIER, "init"),
+				Params: []token.Token{op(token.IDENTIFIER, "x")},
+				Body: []ast.Stmt{&ast.Expression{Expression: &ast.Set{
+					Object: &ast.This{Keyword: op(token.THIS, "this")},
+					Name:   op(token.IDENTIFIER, "x"),
+					Value:  &ast.Variable{Name: op(token.IDENTIFIER, "x")},
+				}}},
+			},
+			{
+				Name: op(token.IDENTIFIER, "get"),
+				Body: []ast.Stmt{&ast.Return{
+					Keyword: op(token.RETURN, "return"),
+					Value:   &ast.Get{Object: &ast.This{Keyword: op(token.THIS, "this")}, Name: op(token.IDENTIFIER, "x")},
+				}},
+			},
+		},
+	}
+
+	got := ast.NewStmtPrinter(&ast.Printer{}).Print(class)
+	want := "(class Point (fun init (x) (block (expr (.= this x x)))) (fun get () (block (return (. this x)))))"
+	if got != want {
+		t.Errorf("Print() = %q, want %q", got, want)
+	}
+
+	empty := ast.NewStmtPrinter(&ast.Printer{}).Print(&ast.Class{Name: op(token.IDENTIFIER, "Empty")})
+	if want := "(class Empty)"; empty != want {
+		t.Errorf("empty class = %q, want %q", empty, want)
+	}
+}

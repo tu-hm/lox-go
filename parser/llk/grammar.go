@@ -271,6 +271,15 @@ func loxGrammar() *grammar {
 		act(mkCall),
 		nt(nCallTail),
 	)
+	// A property access is a second postfix suffix on the same tail rule, which
+	// is what makes it bind exactly as tightly as a call. Prediction stays
+	// LL(1): the three callTail productions begin with '(', '.', and ε.
+	g.add(nCallTail,
+		term(token.DOT, ""),
+		term(token.IDENTIFIER, "Expect property name after '.'."),
+		act(mkGet),
+		nt(nCallTail),
+	)
 	g.add(nCallTail) // ε
 	g.add(nArguments, nt(nExpression), act(startArguments), nt(nArgumentsTail))
 	g.add(nArguments, act(emptyArguments)) // ε
@@ -287,6 +296,7 @@ func loxGrammar() *grammar {
 	g.add("primary", term(token.NIL, ""), act(mkConst(nil)))
 	g.add("primary", term(token.NUMBER, ""), act(mkLiteral))
 	g.add("primary", term(token.STRING, ""), act(mkLiteral))
+	g.add("primary", term(token.THIS, ""), act(mkThis))
 	g.add("primary", term(token.IDENTIFIER, ""), act(mkVariable))
 	g.add("primary",
 		term(token.LEFT_PAREN, ""),
@@ -465,6 +475,22 @@ func mkCall(s *stack) error {
 	return nil
 }
 
+// mkGet runs inside callTail, before the recursive tail, for the same reason
+// mkBinary does in level(): folding now leaves the Get as the object of the
+// next suffix, so a.b.c nests from the left.
+func mkGet(s *stack) error {
+	name := s.token()
+	s.token() // '.'
+	object := s.expr()
+	s.push(&ast.Get{Object: object, Name: name})
+	return nil
+}
+
+func mkThis(s *stack) error {
+	s.push(&ast.This{Keyword: s.token()})
+	return nil
+}
+
 // mkGrouping pops in reverse of the body order: ')' then the expression
 // then '('.
 func mkGrouping(s *stack) error {
@@ -491,11 +517,14 @@ func mkAssign(s *stack) error {
 	value := s.expr()
 	equals := s.token()
 	left := s.expr()
-	variable, ok := left.(*ast.Variable)
-	if !ok {
+	switch target := left.(type) {
+	case *ast.Variable:
+		s.push(&ast.Assign{Name: target.Name, Value: value})
+	case *ast.Get:
+		s.push(&ast.Set{Object: target.Object, Name: target.Name, Value: value})
+	default:
 		return errors.ParseErrorAt(equals, "Invalid assignment target.")
 	}
-	s.push(&ast.Assign{Name: variable.Name, Value: value})
 	return nil
 }
 

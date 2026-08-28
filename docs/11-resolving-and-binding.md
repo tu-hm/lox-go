@@ -253,3 +253,7 @@ defining a variable before resolving its initializer is not? See the
 Chapter 12 will add binding kinds — methods, initializers, `this` — to
 `functionType` and to the slots a scope hands out. The `binding` struct and the
 `(distance, index)` pair are the two places that will grow.
+
+That is how it turned out: `this` became a binding at slot 0 of a synthetic
+class scope, precisely because a local environment here has no names to look up.
+See [Chapter 12 — classes](12-classes.md#this-has-a-slot-not-a-name).

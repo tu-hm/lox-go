@@ -43,6 +43,18 @@ func (p *StmtPrinter) VisitBlockStmt(stmt *Block) any {
 	return "(" + strings.Join(parts, " ") + ")"
 }
 
+// VisitClassStmt renders each method through VisitFunctionStmt, so a method and
+// a plain function print identically. That is honest: at this point in the book
+// they differ only in where the runtime stores them.
+func (p *StmtPrinter) VisitClassStmt(stmt *Class) any {
+	parts := make([]string, 0, len(stmt.Methods)+2)
+	parts = append(parts, "class", stmt.Name.Lexeme)
+	for _, method := range stmt.Methods {
+		parts = append(parts, p.VisitFunctionStmt(method).(string))
+	}
+	return "(" + strings.Join(parts, " ") + ")"
+}
+
 func (p *StmtPrinter) VisitExpressionStmt(stmt *Expression) any {
 	return "(expr " + p.expressions.Print(stmt.Expression) + ")"
 }

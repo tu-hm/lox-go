@@ -48,6 +48,14 @@ func TestBareExpressionDetectionIsReplOnlySyntaxChoice(t *testing.T) {
 		"for (;;) {}":      false,
 		"fun f() {}":       false,
 		"return 1":         false,
+		// A class declaration has no semicolon either, so the keyword is the
+		// only thing that keeps a REPL line from being read as an expression.
+		"class C {}":         false,
+		"class C { m() {} }": false,
+		// `this` is an expression, even though it will not resolve at the REPL.
+		"this":         true,
+		"this.field":   true,
+		"egg.scramble": true,
 	} {
 		if got := isBareExpression(lexer.Lex(source)); got != want {
 			t.Errorf("isBareExpression(%q) = %t, want %t", source, got, want)
@@ -105,5 +113,42 @@ func TestRunSourceRunsDespiteWarnings(t *testing.T) {
 	}
 	if errors.HadError {
 		t.Error("HadError = true, want a warning to leave the exit code alone")
+	}
+}
+
+// TestRunSourceReusesClassesAcrossReplLines: a class declared on one line has
+// to still be there on the next, which is the whole reason the REPL holds one
+// interpreter rather than building a fresh one per line.
+func TestRunSourceReusesClassesAcrossReplLines(t *testing.T) {
+	defer errors.Reset()
+
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	runSource(`class Answer { init() { this.value = 42; } get() { return this.value; } }`, options{}, interp, true)
+	runSource(`var answer = Answer();`, options{}, interp, true)
+	runSource(`print answer.get();`, options{}, interp, true)
+
+	if got, want := out.String(), "42\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+// TestBareThisAtTheReplIsARuntimeError documents a real consequence of the
+// expression-friendly REPL. A bare line skips resolution entirely — an
+// expression cannot declare anything, so there are no local scopes — which
+// means `this` is not caught as the static error it would be in a script. It
+// falls through to the global lookup and fails there instead.
+func TestBareThisAtTheReplIsARuntimeError(t *testing.T) {
+	defer errors.Reset()
+
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	runSource(`this`, options{}, interp, true)
+
+	if got := out.String(); got != "" {
+		t.Errorf("output = %q, want nothing printed", got)
+	}
+	if !errors.HadRuntimeError {
+		t.Error("bare `this` did not report a runtime error")
 	}
 }

@@ -157,6 +157,45 @@ func (i *Interpreter) VisitCallExpr(e *ast.Call) any {
 	return callable.Call(i, arguments)
 }
 
+func (i *Interpreter) VisitGetExpr(e *ast.Get) any {
+	object := i.evaluate(e.Object)
+	instance, ok := object.(*LoxInstance)
+	if !ok {
+		// Numbers and strings have no properties here, deliberately: giving
+		// them any would mean deciding where the methods of a primitive live,
+		// which is a bigger design question than this chapter needs.
+		i.fail(e.Name, "Only instances have properties.")
+	}
+	value, err := instance.get(e.Name)
+	if err != nil {
+		i.failWith(err)
+	}
+	return value
+}
+
+// VisitSetExpr evaluates the object before the value, which is the order the
+// two subexpressions appear in the source. It matters when both have side
+// effects and the object turns out not to be an instance: the error is reported
+// before the value is ever evaluated.
+func (i *Interpreter) VisitSetExpr(e *ast.Set) any {
+	object := i.evaluate(e.Object)
+	instance, ok := object.(*LoxInstance)
+	if !ok {
+		i.fail(e.Name, "Only instances have fields.")
+	}
+
+	value := i.evaluate(e.Value)
+	instance.set(e.Name, value)
+	return value
+}
+
+// VisitThisExpr reads `this` exactly like any other variable, because by the
+// time execution starts it is one: LoxFunction.bind put it in a scope and the
+// resolver recorded where.
+func (i *Interpreter) VisitThisExpr(e *ast.This) any {
+	return i.lookUpVariable(e.Keyword, e)
+}
+
 func (i *Interpreter) VisitLiteralExpr(e *ast.Literal) any {
 	return e.Value
 }
@@ -290,13 +329,37 @@ func (i *Interpreter) VisitBlockStmt(stmt *ast.Block) any {
 	return nil
 }
 
+// VisitClassStmt turns the declaration into one runtime object and binds it
+// under the class's name. Every method closes over the environment the class was
+// declared in, so a method body can name the class itself — the binding below
+// has completed by the time any method can be called.
+//
+// The book defines the name as nil, builds the class, then assigns over it.
+// That two-step does not survive slot-addressed locals: Environment.Assign
+// matches by name and a local environment holds no names, so it would walk past
+// this scope and fail in the globals. One Define is correct here and keeps the
+// resolver's slot numbering, because a class declaration performs exactly one
+// Define in its scope. Chapter 13's superclass scope will revisit this.
+func (i *Interpreter) VisitClassStmt(stmt *ast.Class) any {
+	methods := make(map[string]*LoxFunction, len(stmt.Methods))
+	for _, method := range stmt.Methods {
+		// "init" is a name, not a keyword. Nothing stops a program from
+		// declaring it, and nothing should: that is how you get a constructor.
+		isInitializer := method.Name.Lexeme == "init"
+		methods[method.Name.Lexeme] = newLoxFunction(method, i.environment, isInitializer)
+	}
+
+	i.environment.Define(stmt.Name.Lexeme, newLoxClass(stmt.Name.Lexeme, methods))
+	return nil
+}
+
 func (i *Interpreter) VisitExpressionStmt(stmt *ast.Expression) any {
 	i.evaluate(stmt.Expression)
 	return nil
 }
 
 func (i *Interpreter) VisitFunctionStmt(stmt *ast.Function) any {
-	function := newLoxFunction(stmt, i.environment)
+	function := newLoxFunction(stmt, i.environment, false)
 	i.environment.Define(stmt.Name.Lexeme, function)
 	return nil
 }

@@ -666,3 +666,296 @@ func TestEarlyReturnSkipsLaterSlots(t *testing.T) {
 		t.Errorf("output = %q, want %q", got, want)
 	}
 }
+
+// ---------------------------------------------------------------- classes --
+
+func TestClassesInstancesAndProperties(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		class Bagel {
+			topping() { return "everything"; }
+		}
+		print Bagel;
+		var bagel = Bagel();
+		print bagel;
+
+		// A field does not exist until it is assigned, and assignment is an
+		// expression that evaluates to the value stored.
+		print bagel.flavor = "plain";
+		print bagel.flavor;
+		bagel.flavor = "sesame";
+		print bagel.flavor;
+
+		// A method found through an instance is already bound to it.
+		print bagel.topping();
+
+		// A field shadows a method of the same name: the lookup order is
+		// fields first, and that is a language decision, not an accident.
+		bagel.topping = "shadowed";
+		print bagel.topping;
+	`)
+
+	if err := execute(t, interp, program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	want := "Bagel\nBagel instance\nplain\nplain\nsesame\neverything\nshadowed\n"
+	if got := out.String(); got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+// TestBoundMethodOutlivesItsAccess is the reason methods are bound at access
+// time rather than at call time. Once `serve` is in a variable, nothing at the
+// call site says which instance it belongs to.
+func TestBoundMethodOutlivesItsAccess(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		class Person {
+			init(name) { this.name = name; }
+			sayName() { print this.name; }
+		}
+		var jane = Person("Jane");
+		var bill = Person("Bill");
+
+		var method = jane.sayName;
+		method();
+
+		// The book's callback case: the same method value handed to a
+		// function that knows nothing about receivers.
+		fun callTwice(f) { f(); f(); }
+		callTwice(bill.sayName);
+
+		// Reassigning a field the method reads is visible through the binding,
+		// because the binding captured the instance and not the value.
+		jane.name = "Renamed";
+		method();
+	`)
+
+	if err := execute(t, interp, program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got, want := out.String(), "Jane\nBill\nBill\nRenamed\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+// TestThisResolvesThroughNestedScopes is the test that would catch a wrong slot
+// or a wrong distance. `this` is a resolved local here, so a closure nested
+// inside a method has to reach two environments out to find it, and a local
+// declared alongside must not collide with its slot.
+func TestThisResolvesThroughNestedScopes(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		class Thing {
+			init() { this.name = "thing"; }
+			makeReader() {
+				var prefix = "read ";
+				fun read() {
+					var suffix = "!";
+					return prefix + this.name + suffix;
+				}
+				return read;
+			}
+			sumTo(n) {
+				this.total = 0;
+				for (var i = 1; i <= n; i = i + 1) {
+					{ this.total = this.total + i; }
+				}
+				return this.total;
+			}
+		}
+		var thing = Thing();
+		print thing.makeReader()();
+		print thing.sumTo(4);
+
+		// A class declared inside a function: the class name is itself a local,
+		// one scope further out than "this" from inside a method body.
+		fun makeInner() {
+			var tag = "inner";
+			class Inner {
+				describe() { return tag + "/" + Inner().kind(); }
+				kind() { return "class"; }
+			}
+			return Inner();
+		}
+		print makeInner().describe();
+
+		// this is the instance, by identity, not a copy of it.
+		class Self { me() { return this; } }
+		var self = Self();
+		print self.me() == self;
+	`)
+
+	if err := execute(t, interp, program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got, want := out.String(), "read thing!\n10\ninner/class\ntrue\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func TestInitializersRunAndAlwaysReturnTheInstance(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		class Point {
+			init(x, y) {
+				this.x = x;
+				this.y = y;
+			}
+			sum() { return this.x + this.y; }
+		}
+		var point = Point(1, 2);
+		print point.sum();
+
+		// Calling init() directly re-initializes and still hands back the
+		// instance rather than nil — that is what isInitializer forces.
+		var same = point.init(10, 20);
+		print same.sum();
+		print same == point;
+
+		// An early bare return exits the body but does not change the answer.
+		class Guarded {
+			init(skip) {
+				this.value = "set";
+				if (skip) return;
+				this.value = "also set";
+			}
+		}
+		print Guarded(true).value;
+		print Guarded(false).value;
+
+		// A class with no initializer takes no arguments and constructs fine.
+		class Bare {}
+		print Bare();
+	`)
+
+	if err := execute(t, interp, program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	want := "3\n30\ntrue\nset\nalso set\nBare instance\n"
+	if got := out.String(); got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func TestClassRuntimeErrors(t *testing.T) {
+	defer loxerrors.Reset()
+
+	tests := []struct {
+		name    string
+		source  string
+		message string
+	}{
+		{
+			name:    "property read on a non-instance",
+			source:  `print "not an object".field;`,
+			message: "Only instances have properties.",
+		},
+		{
+			name:    "property write on a non-instance",
+			source:  `var n = 1; n.field = 2;`,
+			message: "Only instances have fields.",
+		},
+		{
+			name:    "property read on a class rather than an instance",
+			source:  `class C { m() { return 1; } } print C.m;`,
+			message: "Only instances have properties.",
+		},
+		{
+			name:    "property that was never assigned and is not a method",
+			source:  `class C {} print C().missing;`,
+			message: "Undefined property 'missing'.",
+		},
+		{
+			name:    "initializer arity is the class's arity",
+			source:  `class C { init(a) {} } C();`,
+			message: "Expected 1 arguments but got 0.",
+		},
+		{
+			name:    "a class with no initializer takes no arguments",
+			source:  `class C {} C(1);`,
+			message: "Expected 0 arguments but got 1.",
+		},
+		{
+			name:    "calling the result of a property that is not callable",
+			source:  `class C {} var c = C(); c.field = 1; c.field();`,
+			message: "Can only call functions and classes.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			interp := interpreter.NewWithWriter(&bytes.Buffer{})
+			err := execute(t, interp, parseProgram(t, tt.source))
+
+			var runtimeErr *loxerrors.RuntimeError
+			if !stderrors.As(err, &runtimeErr) {
+				t.Fatalf("Execute(%q) error = %v, want a *RuntimeError", tt.source, err)
+			}
+			if runtimeErr.Message != tt.message {
+				t.Errorf("message = %q, want %q", runtimeErr.Message, tt.message)
+			}
+		})
+	}
+}
+
+// TestSetExprReportsTheObjectBeforeEvaluatingTheValue pins the evaluation
+// order. The object is evaluated first, so a non-instance target fails before
+// the right-hand side runs at all.
+func TestSetExprReportsTheObjectBeforeEvaluatingTheValue(t *testing.T) {
+	defer loxerrors.Reset()
+
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		fun loud() { print "evaluated"; return 1; }
+		var notAnInstance = "text";
+		notAnInstance.field = loud();
+	`)
+
+	if err := execute(t, interp, program); err == nil {
+		t.Fatal("Execute succeeded, want a runtime error")
+	}
+	if got := out.String(); got != "" {
+		t.Errorf("output = %q, want nothing: the value was evaluated despite the bad target", got)
+	}
+}
+
+func TestParserFrontEndsExecuteClassesEqually(t *testing.T) {
+	const source = `
+		class Counter {
+			init(start) { this.count = start; }
+			bump() {
+				this.count = this.count + 1;
+				return this.count;
+			}
+		}
+		var counter = Counter(40);
+		counter.bump();
+		print counter.bump();
+	`
+
+	var outputs []string
+	for _, kind := range []parser.Kind{parser.RecursiveDescent, parser.LLK} {
+		frontEnd, err := parser.NewOf(parser.Config{Kind: kind}, lexer.Lex(source))
+		if err != nil {
+			t.Fatalf("NewOf(%s): %v", kind, err)
+		}
+		program, errs := frontEnd.ParseProgram()
+		if len(errs) != 0 {
+			t.Fatalf("%s ParseProgram: %v", kind, errs)
+		}
+		var out bytes.Buffer
+		if err := execute(t, interpreter.NewWithWriter(&out), program); err != nil {
+			t.Fatalf("%s Execute: %v", kind, err)
+		}
+		outputs = append(outputs, out.String())
+	}
+	if outputs[0] != "42\n" || outputs[1] != outputs[0] {
+		t.Errorf("recursive descent = %q, LL(k) = %q, want 42", outputs[0], outputs[1])
+	}
+}

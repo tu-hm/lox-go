@@ -40,6 +40,21 @@ func (p *RPNPrinter) VisitCallExpr(e *Call) any {
 	return p.join(exprs...) + " call/" + strconv.Itoa(len(e.Arguments))
 }
 
+// VisitGetExpr and VisitSetExpr put the property name where Assign puts the
+// variable name — after the operands, before the operator — so `.` and `.=`
+// read as postfix operators like every other one here.
+func (p *RPNPrinter) VisitGetExpr(e *Get) any {
+	return p.Print(e.Object) + " " + e.Name.Lexeme + " ."
+}
+
+func (p *RPNPrinter) VisitSetExpr(e *Set) any {
+	return p.Print(e.Object) + " " + p.Print(e.Value) + " " + e.Name.Lexeme + " .="
+}
+
+func (p *RPNPrinter) VisitThisExpr(e *This) any {
+	return e.Keyword.Lexeme
+}
+
 // VisitGroupingExpr drops the parentheses. That is the whole point of RPN: the
 // operand order already fixes the grouping, so "(" and ")" carry no
 // information. Grouping still has to exist as a node — the parser needs it to

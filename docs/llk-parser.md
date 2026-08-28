@@ -239,8 +239,8 @@ checks the next statement really does start clean.
 
 `ParseProgram` restarts the driver per declaration rather than running one parse
 over the whole program. Blocks recursively do the same for their contents;
-chapter 9 control statements and chapter 10 function declarations recursively
-call the same declaration and statement dispatchers.
+chapter 9 control statements and the chapter 10 function and chapter 12 class
+declarations recursively call the same declaration and statement dispatchers.
 Recovery is much easier to reason about when the driver stack is empty at each
 declaration boundary. The chapter 7 `ParseAll` expression entry point remains
 for compatibility and uses the same reset rule.
@@ -252,6 +252,22 @@ returns the finished expression and only then checks for leftovers. Same token,
 same line, different message (`Expect end of expression.` either way here, but
 raised from different places). That is the LL "viable prefix" property: the
 parser never consumes a token that cannot be part of a valid program.
+
+Chapter 12's property access shows the same effect costing something legible.
+`egg.;` is rejected at every `k`, but by a different rule each time:
+
+| `k` | fails at | message |
+|---|---|---|
+| 1 | the `IDENTIFIER` terminal inside the `.` production | `Expect property name after '.'.` |
+| 2 | `callTail`, where the window `. ;` predicts nothing | `Expect end of expression.` |
+| 3 | `call`, which cannot be predicted at all | `Expect expression.` |
+
+Only `k = 1` gives the message recursive descent gives, because only at `k = 1`
+does the parser commit to the `.` production before discovering the problem.
+Wider lookahead notices the same mistake *sooner* and therefore describes it
+*less* specifically — the viable-prefix property working against readability.
+This is the sharpest argument in the repo for `DefaultK = 1`, and
+`TestPropertyNameErrorMovesWithK` pins all three rather than hiding the spread.
 
 ## 8. Reading the table
 

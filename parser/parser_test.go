@@ -487,3 +487,94 @@ func TestFunctionParameterAndArgumentLimits(t *testing.T) {
 		t.Error("256 arguments did not report an error")
 	}
 }
+
+// ---------------------------------------------------------------- classes --
+
+func TestParseClassesPropertiesAndThis(t *testing.T) {
+	defer errors.Reset()
+
+	// Property access is postfix and binds exactly as tightly as a call, which
+	// is what lets the two interleave without parentheses.
+	for source, want := range map[string]string{
+		"egg.scramble":         "(. egg scramble)",
+		"a.b.c":                "(. (. a b) c)",
+		"egg.scramble(3).with": "(. (call (. egg scramble) 3) with)",
+		"this.field":           "(. this field)",
+		"this":                 "this",
+		"point.x = 1":          "(.= point x 1)",
+		"a.b.c = d.e":          "(.= (. a b) c (. d e))",
+		// A property assignment is right-associative for the same reason a
+		// variable assignment is: the tail recurses into assignment.
+		"a.x = b.y = 1": "(.= a x (.= b y 1))",
+	} {
+		expr, err := parserFor(t, source).Parse()
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", source, err)
+		}
+		if got := (&ast.Printer{}).Print(expr); got != want {
+			t.Errorf("Parse(%q) = %s, want %s", source, got, want)
+		}
+	}
+
+	statements, errs := parserFor(t, `
+		class Breakfast {
+			init(meat) { this.meat = meat; }
+			serve(who) { return "Enjoy your " + this.meat + ", " + who + "."; }
+		}
+	`).ParseProgram()
+	if len(errs) != 0 {
+		t.Fatalf("ParseProgram: %v", errs)
+	}
+	want := "(class Breakfast " +
+		"(fun init (meat) (block (expr (.= this meat meat)))) " +
+		"(fun serve (who) (block (return (+ (+ (+ (+ Enjoy your  (. this meat)) , ) who) .)))))"
+	if got := renderStatements(statements); len(got) != 1 || got[0] != want {
+		t.Errorf("ParseProgram = %v, want [%s]", got, want)
+	}
+}
+
+// TestParseEmptyClassBody: zero methods is legal, and Methods stays nil rather
+// than becoming an empty slice. Nothing downstream distinguishes the two, but a
+// test pins which one the parser produces.
+func TestParseEmptyClassBody(t *testing.T) {
+	defer errors.Reset()
+
+	statements, errs := parserFor(t, "class Empty {}").ParseProgram()
+	if len(errs) != 0 {
+		t.Fatalf("ParseProgram: %v", errs)
+	}
+	class, ok := statements[0].(*ast.Class)
+	if !ok {
+		t.Fatalf("statement = %T, want *ast.Class", statements[0])
+	}
+	if class.Name.Lexeme != "Empty" || len(class.Methods) != 0 {
+		t.Errorf("class = %q with %d methods, want Empty with 0", class.Name.Lexeme, len(class.Methods))
+	}
+}
+
+func TestClassAndPropertyParseErrors(t *testing.T) {
+	defer errors.Reset()
+
+	for source, want := range map[string]string{
+		"class {}":                "Expect class name.",
+		"class C":                 "Expect '{' before class body.",
+		"class C {":               "Expect '}' after class body.",
+		"class C { method }":      "Expect '(' after method name.",
+		"class C { () {} }":       "Expect method name.",
+		"class C { m() return; }": "Expect '{' before method body.",
+		"egg.;":                   "Expect property name after '.'.",
+		"egg.3;":                  "Expect property name after '.'.",
+		// The target is a call, not a property or a variable, so there is
+		// nothing to assign to.
+		"egg.scramble() = 1;": "Invalid assignment target.",
+	} {
+		_, errs := parserFor(t, source).ParseProgram()
+		if len(errs) == 0 {
+			t.Errorf("ParseProgram(%q) returned no error", source)
+			continue
+		}
+		if parseErr, ok := errs[0].(*ParseError); !ok || parseErr.Message != want {
+			t.Errorf("ParseProgram(%q) error = %v, want %q", source, errs[0], want)
+		}
+	}
+}

@@ -157,9 +157,20 @@ func (p *Parser) declarationRecovering() ast.Stmt {
 }
 
 func (p *Parser) declaration() (ast.Stmt, error) {
+	if p.check(token.CLASS) {
+		p.advance()
+		return p.classDeclaration()
+	}
 	if p.check(token.FUN) {
 		p.advance()
-		return p.function("function")
+		// Assigned rather than returned directly: function returns a typed
+		// *ast.Function, so returning it as an ast.Stmt on the error path would
+		// hand back a non-nil interface holding a nil pointer.
+		function, err := p.function("function")
+		if err != nil {
+			return nil, err
+		}
+		return function, nil
 	}
 	if p.check(token.VAR) {
 		return p.runStatement(nVarDeclaration)
@@ -167,7 +178,35 @@ func (p *Parser) declaration() (ast.Stmt, error) {
 	return p.statement()
 }
 
-func (p *Parser) function(kind string) (ast.Stmt, error) {
+// classDeclaration joins the orchestration layer for the same reason function
+// does: a class body is a repetition of a rule that itself contains a
+// recoverable block, and recovery is what this layer exists for.
+func (p *Parser) classDeclaration() (ast.Stmt, error) {
+	name, err := p.consume(token.IDENTIFIER, "Expect class name.")
+	if err != nil {
+		return nil, err
+	}
+	if !p.check(token.LEFT_BRACE) {
+		return nil, errors.ParseErrorAt(p.peek(), "Expect '{' before class body.")
+	}
+	p.advance()
+
+	var methods []*ast.Function
+	for !p.check(token.RIGHT_BRACE) && !p.isAtEnd() {
+		method, err := p.function("method")
+		if err != nil {
+			return nil, err
+		}
+		methods = append(methods, method)
+	}
+
+	if _, err := p.consume(token.RIGHT_BRACE, "Expect '}' after class body."); err != nil {
+		return nil, err
+	}
+	return &ast.Class{Name: name, Methods: methods}, nil
+}
+
+func (p *Parser) function(kind string) (*ast.Function, error) {
 	name, err := p.consume(token.IDENTIFIER, "Expect "+kind+" name.")
 	if err != nil {
 		return nil, err

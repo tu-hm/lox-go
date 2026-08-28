@@ -175,6 +175,11 @@ func TestResolverIsFrontEndAgnostic(t *testing.T) {
 			fun show() { print i; }
 			show();
 		}
+		class Greeter {
+			init(name) { this.name = name; }
+			greet() { print "hi " + this.name; }
+		}
+		Greeter("you").greet();
 	`
 
 	configs := []parser.Config{
@@ -184,7 +189,7 @@ func TestResolverIsFrontEndAgnostic(t *testing.T) {
 		{Kind: parser.LLK, K: llk.MaxK},
 	}
 
-	const want = "global\nglobal\n0\n1\n"
+	const want = "global\nglobal\n0\n1\nhi you\n"
 	for _, config := range configs {
 		t.Run(string(config.Kind), func(t *testing.T) {
 			loxerrors.Reset()
@@ -337,5 +342,153 @@ func TestUnusedCheckIsSatisfiedBySelfReference(t *testing.T) {
 	}`)
 	if len(warnings) != 0 {
 		t.Errorf("warnings = %v, want none: the recursive call counts as a read", warnings)
+	}
+}
+
+// ---------------------------------------------------------------- classes --
+
+func TestResolverReportsClassStaticErrors(t *testing.T) {
+	defer loxerrors.Reset()
+
+	tests := []struct {
+		name    string
+		source  string
+		lexeme  string
+		message string
+	}{
+		{
+			name:    "this at the top level",
+			source:  `print this;`,
+			lexeme:  "this",
+			message: "Can't use 'this' outside of a class.",
+		},
+		{
+			name:    "this in a plain function is still outside a class",
+			source:  `fun f() { return this; }`,
+			lexeme:  "this",
+			message: "Can't use 'this' outside of a class.",
+		},
+		{
+			name:    "this in a function declared after the class body closed",
+			source:  `class C {} fun f() { print this; }`,
+			lexeme:  "this",
+			message: "Can't use 'this' outside of a class.",
+		},
+		{
+			name:    "a value returned from an initializer",
+			source:  `class C { init() { return "early"; } }`,
+			lexeme:  "return",
+			message: "Can't return a value from an initializer.",
+		},
+		{
+			name: "a value returned from a function nested in an initializer is fine, " +
+				"but from the initializer itself is not",
+			source:  `class C { init() { fun f() { return 1; } f(); return 2; } }`,
+			lexeme:  "return",
+			message: "Can't return a value from an initializer.",
+		},
+		{
+			name:    "a redeclared local class collides like any other name",
+			source:  `{ class C {} var C = 1; print C; }`,
+			lexeme:  "C",
+			message: "Already a variable with this name in this scope.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loxerrors.Reset()
+
+			errs, _ := resolveSource(t, tt.source)
+			if len(errs) == 0 {
+				t.Fatalf("resolve(%q) reported nothing", tt.source)
+			}
+			var resolveErr *loxerrors.ResolveError
+			if !stderrors.As(errs[0], &resolveErr) {
+				t.Fatalf("error = %v (%T), want a *ResolveError", errs[0], errs[0])
+			}
+			if resolveErr.Token.Lexeme != tt.lexeme || resolveErr.Message != tt.message {
+				t.Errorf("error at %q: %q, want at %q: %q",
+					resolveErr.Token.Lexeme, resolveErr.Message, tt.lexeme, tt.message)
+			}
+		})
+	}
+}
+
+func TestResolverAcceptsLegalClassBindings(t *testing.T) {
+	defer loxerrors.Reset()
+
+	for _, source := range []string{
+		// this in a method, and in a closure nested inside one.
+		`class C { m() { return this; } }`,
+		`class C { m() { fun inner() { return this; } return inner; } }`,
+		// A bare return in an initializer is an early exit, not a value.
+		`class C { init() { return; } }`,
+		// A method named init in a nested class, and a plain function
+		// returning a value, in the same program.
+		`class C { init() { fun f() { return 1; } this.f = f; } }`,
+		// A class body may reference the class it is declaring: the binding
+		// exists before any method can run.
+		`class C { make() { return C(); } } print C().make();`,
+		// A method may be named after a keyword-adjacent word without becoming
+		// an initializer.
+		`class C { initialize() { return 1; } } print C().initialize();`,
+	} {
+		t.Run(source, func(t *testing.T) {
+			loxerrors.Reset()
+
+			errs, _ := resolveSource(t, source)
+			if len(errs) != 0 {
+				t.Errorf("errors = %v, want none", errs)
+			}
+		})
+	}
+}
+
+// TestResolverDoesNotWarnAboutThisOrMethodNames covers the two exemptions
+// chapter 12 adds to the unused check. `this` is never written by the source, so
+// there is nothing for the programmer to remove; a method name is not a binding
+// at all, because a method is reached through its class rather than a scope.
+func TestResolverDoesNotWarnAboutThisOrMethodNames(t *testing.T) {
+	defer loxerrors.Reset()
+
+	for _, source := range []string{
+		// Every method ignores `this`. Without the exemption each class scope
+		// would warn about a name the programmer never wrote.
+		`{ class C { m() { return 1; } } print C().m(); }`,
+		// A method nobody calls is not reported: the class is a value, and any
+		// caller anywhere may reach the method through it.
+		`{ class C { used() { return 1; } unused() { return 2; } } print C().used(); }`,
+		// this used in one method and not another.
+		`{ class C { a() { return this; } b() { return 1; } } print C().b(); }`,
+	} {
+		t.Run(source, func(t *testing.T) {
+			loxerrors.Reset()
+
+			errs, warnings := resolveSource(t, source)
+			if len(errs) != 0 {
+				t.Fatalf("errors = %v, want none", errs)
+			}
+			if len(warnings) != 0 {
+				t.Errorf("warnings = %v, want none", warnings)
+			}
+		})
+	}
+}
+
+// TestResolverWarnsAboutAnUnusedLocalClass: a class name is an ordinary local
+// binding, so it is subject to the same check as a variable or a function — and
+// the diagnostic says "class", which is why bindingKind exists.
+func TestResolverWarnsAboutAnUnusedLocalClass(t *testing.T) {
+	defer loxerrors.Reset()
+	loxerrors.Reset()
+
+	errs, warnings := resolveSource(t, `{ class Unused { m() { return 1; } } }`)
+	if len(errs) != 0 {
+		t.Fatalf("errors = %v, want none", errs)
+	}
+	want := "Local class 'Unused' is never used."
+	if len(warnings) != 1 || warnings[0].Message != want {
+		t.Errorf("warnings = %v, want exactly [%s]", warnings, want)
 	}
 }

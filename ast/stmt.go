@@ -16,6 +16,7 @@ type Stmt interface {
 // whole reason for the pattern.
 type StmtVisitor interface {
 	VisitBlockStmt(e *Block) any
+	VisitClassStmt(e *Class) any
 	VisitExpressionStmt(e *Expression) any
 	VisitFunctionStmt(e *Function) any
 	VisitIfStmt(e *If) any
@@ -32,6 +33,17 @@ type Block struct {
 
 func (e *Block) Accept(v StmtVisitor) any { return v.VisitBlockStmt(e) }
 func (e *Block) isStmt()                  {}
+
+// Class binds Name to a class whose instances carry Methods.
+// Methods are *Function rather than Stmt because every consumer wants the
+// concrete node: a method is never executed as a statement.
+type Class struct {
+	Name    token.Token
+	Methods []*Function
+}
+
+func (e *Class) Accept(v StmtVisitor) any { return v.VisitClassStmt(e) }
+func (e *Class) isStmt()                  {}
 
 // Expression evaluates an expression for its side effects.
 type Expression struct {
