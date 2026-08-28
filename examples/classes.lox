@@ -116,6 +116,36 @@ counter.bump();
 print counter.bump();         // 2
 print counter.copy().bump();  // 1 — a fresh instance, independent state
 
+// ---------------------------------------------------------------------------
+// Challenge 1 — class methods.
+//
+// A leading `class` puts the method on the class rather than on its instances.
+// The class is then a property owner in its own right, so `Math.square(3)` uses
+// the same syntax, the same lookup, and the same binding as an instance method.
+class Math {
+  class square(n) {
+    return n * n;
+  }
+
+  // `this` inside a class method is the class, because that is what the runtime
+  // binds. So one class method reaches another exactly as an instance method
+  // reaches its siblings.
+  class cube(n) {
+    return n * this.square(n);
+  }
+}
+
+print Math.square(3);         // 9
+print Math.cube(3);           // 27
+
+// Static fields fall out of the same design without any extra work.
+Math.description = "arithmetic";
+print Math.description;       // arithmetic
+
+// The two namespaces are separate in both directions: an instance method is not
+// reachable through the class, and a class method is not reachable through an
+// instance. Both attempts are `Undefined property`.
+
 // Each of these is refused before the program runs. Uncomment one to see it:
 //
 //   print this;                            Can't use 'this' outside of a class.

@@ -191,19 +191,29 @@ func (p *Parser) classDeclaration() (ast.Stmt, error) {
 	}
 	p.advance()
 
-	var methods []*ast.Function
+	// A leading `class` marks a class method. One token of lookahead settles
+	// it, because `class` cannot begin a method name.
+	var methods, classMethods []*ast.Function
 	for !p.check(token.RIGHT_BRACE) && !p.isAtEnd() {
+		onTheClass := p.check(token.CLASS)
+		if onTheClass {
+			p.advance()
+		}
 		method, err := p.function("method")
 		if err != nil {
 			return nil, err
 		}
-		methods = append(methods, method)
+		if onTheClass {
+			classMethods = append(classMethods, method)
+		} else {
+			methods = append(methods, method)
+		}
 	}
 
 	if _, err := p.consume(token.RIGHT_BRACE, "Expect '}' after class body."); err != nil {
 		return nil, err
 	}
-	return &ast.Class{Name: name, Methods: methods}, nil
+	return &ast.Class{Name: name, Methods: methods, ClassMethods: classMethods}, nil
 }
 
 func (p *Parser) function(kind string) (*ast.Function, error) {

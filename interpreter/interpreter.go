@@ -159,14 +159,16 @@ func (i *Interpreter) VisitCallExpr(e *ast.Call) any {
 
 func (i *Interpreter) VisitGetExpr(e *ast.Get) any {
 	object := i.evaluate(e.Object)
-	instance, ok := object.(*LoxInstance)
+	// A propertyOwner is an instance or a class; the switch is on the interface
+	// so class methods need no separate path. Numbers and strings own no
+	// properties here, deliberately: giving them any would mean deciding where
+	// the methods of a primitive live, which is a bigger design question than
+	// this chapter needs.
+	owner, ok := object.(propertyOwner)
 	if !ok {
-		// Numbers and strings have no properties here, deliberately: giving
-		// them any would mean deciding where the methods of a primitive live,
-		// which is a bigger design question than this chapter needs.
 		i.fail(e.Name, "Only instances have properties.")
 	}
-	value, err := instance.get(e.Name)
+	value, err := owner.get(e.Name)
 	if err != nil {
 		i.failWith(err)
 	}
@@ -179,13 +181,13 @@ func (i *Interpreter) VisitGetExpr(e *ast.Get) any {
 // before the value is ever evaluated.
 func (i *Interpreter) VisitSetExpr(e *ast.Set) any {
 	object := i.evaluate(e.Object)
-	instance, ok := object.(*LoxInstance)
+	owner, ok := object.(propertyOwner)
 	if !ok {
 		i.fail(e.Name, "Only instances have fields.")
 	}
 
 	value := i.evaluate(e.Value)
-	instance.set(e.Name, value)
+	owner.set(e.Name, value)
 	return value
 }
 
@@ -349,7 +351,14 @@ func (i *Interpreter) VisitClassStmt(stmt *ast.Class) any {
 		methods[method.Name.Lexeme] = newLoxFunction(method, i.environment, isInitializer)
 	}
 
-	i.environment.Define(stmt.Name.Lexeme, newLoxClass(stmt.Name.Lexeme, methods))
+	// A class method named init is not a constructor — construction is a thing
+	// that happens to instances, and a class method never receives one.
+	classMethods := make(map[string]*LoxFunction, len(stmt.ClassMethods))
+	for _, method := range stmt.ClassMethods {
+		classMethods[method.Name.Lexeme] = newLoxFunction(method, i.environment, false)
+	}
+
+	i.environment.Define(stmt.Name.Lexeme, newLoxClass(stmt.Name.Lexeme, methods, classMethods))
 	return nil
 }
 

@@ -98,6 +98,10 @@ func (p *Parser) declaration() (ast.Stmt, error) {
 // classDeclaration parses a class body as a list of methods. A method is
 // exactly the `function` rule without the leading `fun`: the keyword is
 // redundant inside a class body, so the grammar drops it.
+//
+// A leading `class` makes the method a class method — one reached through the
+// class rather than through an instance. Reusing the keyword costs nothing:
+// `class` cannot start a method name, so one token of lookahead settles it.
 func (p *Parser) classDeclaration() (ast.Stmt, error) {
 	name, err := p.consume(token.IDENTIFIER, "Expect class name.")
 	if err != nil {
@@ -107,19 +111,24 @@ func (p *Parser) classDeclaration() (ast.Stmt, error) {
 		return nil, err
 	}
 
-	var methods []*ast.Function
+	var methods, classMethods []*ast.Function
 	for !p.check(token.RIGHT_BRACE) && !p.isAtEnd() {
+		onTheClass := p.match(token.CLASS)
 		method, err := p.function("method")
 		if err != nil {
 			return nil, err
 		}
-		methods = append(methods, method)
+		if onTheClass {
+			classMethods = append(classMethods, method)
+		} else {
+			methods = append(methods, method)
+		}
 	}
 
 	if _, err := p.consume(token.RIGHT_BRACE, "Expect '}' after class body."); err != nil {
 		return nil, err
 	}
-	return &ast.Class{Name: name, Methods: methods}, nil
+	return &ast.Class{Name: name, Methods: methods, ClassMethods: classMethods}, nil
 }
 
 func (p *Parser) function(kind string) (*ast.Function, error) {

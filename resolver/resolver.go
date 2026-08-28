@@ -52,6 +52,10 @@ const (
 	functionFunction
 	functionMethod
 	functionInitializer
+	// functionClassMethod is a method reached through the class. `this` is
+	// legal in one — it is the class — but nothing about it is an initializer,
+	// whatever it is named.
+	functionClassMethod
 )
 
 // classType is the same question one level up, and exists for exactly one
@@ -275,6 +279,12 @@ func (r *Resolver) VisitClassStmt(stmt *ast.Class) any {
 			kind = functionInitializer
 		}
 		r.resolveFunction(method, kind)
+	}
+	// Class methods share the same scope, which is what makes `this` mean the
+	// class inside one: bind puts the class in the slot this scope reserved,
+	// so the distance a class method body counts is the distance it gets.
+	for _, method := range stmt.ClassMethods {
+		r.resolveFunction(method, functionClassMethod)
 	}
 	r.endScope()
 	return nil

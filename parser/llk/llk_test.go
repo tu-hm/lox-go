@@ -831,3 +831,27 @@ func TestPropertyNameErrorMovesWithK(t *testing.T) {
 		}
 	}
 }
+
+// TestClassMethodsForEveryK: the `class` modifier is handled in the
+// orchestration layer, not the table, so it costs the grammar nothing and
+// behaves identically at every lookahead.
+func TestClassMethodsForEveryK(t *testing.T) {
+	defer errors.Reset()
+
+	for k := MinK; k <= MaxK; k++ {
+		statements, errs := parserFor(t, `
+			class Math {
+				class square(n) { return n * n; }
+				describe() { return "math"; }
+			}
+		`, k).ParseProgram()
+		if len(errs) != 0 {
+			t.Fatalf("k=%d ParseProgram: %v", k, errs)
+		}
+		want := "(class Math (fun describe () (block (return math))) " +
+			"(static square (n) (block (return (* n n)))))"
+		if got := renderProgram(statements); len(got) != 1 || got[0] != want {
+			t.Errorf("k=%d ParseProgram = %v, want [%s]", k, got, want)
+		}
+	}
+}

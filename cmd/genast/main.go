@@ -146,10 +146,11 @@ var stmts = hierarchy{
 		},
 		{
 			Name: "Class",
-			Doc:  "Class binds Name to a class whose instances carry Methods.\nMethods are *Function rather than Stmt because every consumer wants the\nconcrete node: a method is never executed as a statement.",
+			Doc:  "Class binds Name to a class whose instances carry Methods and which\nitself carries ClassMethods — the ones declared with a leading `class`.\nBoth are *Function rather than Stmt because every consumer wants the\nconcrete node: a method is never executed as a statement.",
 			Fields: []field{
 				{"Name", "token.Token"},
 				{"Methods", "[]*Function"},
+				{"ClassMethods", "[]*Function"},
 			},
 		},
 		{

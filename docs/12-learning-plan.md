@@ -230,7 +230,8 @@ static one a script gets. Both come from the same design decision. Which one?
 
 ## Challenges
 
-1. **Open** — static methods, using `class` as a prefix inside a class body:
+1. **Implemented** — class methods, using `class` as a prefix inside a class
+   body:
 
    ```lox
    class Math {
@@ -239,19 +240,29 @@ static one a script gets. Both come from the same design decision. Which one?
    print Math.square(3); // 9
    ```
 
-   The book's hint is metaclasses: make the class itself an instance, so
-   `Math.square` goes down the ordinary property path. In Go, `LoxClass` embeds
-   `*LoxInstance` and `VisitClassStmt` builds a metaclass first, holding the
-   statics, then the class as an instance of it.
+   The book's hint is metaclasses, and it does not translate to Go — read
+   [the chapter notes](12-classes.md#challenge-1--class-methods-without-metaclasses)
+   for the two reasons and what replaced it.
 
-   One Go-specific trap: embedding is not subtyping for type assertions, so
-   `object.(*LoxInstance)` will *not* match a `*LoxClass`. `VisitGetExpr` and
-   `VisitSetExpr` would have to switch on a small `get`/`set` interface that
-   both satisfy — `*LoxClass` via promotion — rather than on the concrete type.
+   Before reading that: predict what each of these prints, and which are errors.
 
-   Note what the metaclass approach gives you for free: `this` inside a static
-   method is the class object, because it was bound the same way as any other
-   receiver.
+   ```lox
+   class Math { class square(n) { return n * n; } }
+   print Math.square(3);
+   print Math.square;
+   var f = Math.square; print f(4);
+   Math.tag = "arith"; print Math.tag;
+   class C { m() { return 1; } } print C.m;
+   class C { class m() { return 1; } } print C().m;
+   class C { class init() { return 1; } } print C.init(); print C();
+   ```
+
+   Then read `lookUpProperty` in
+   [`interpreter/instance.go`](../interpreter/instance.go) and `get` in
+   [`interpreter/class.go`](../interpreter/class.go).
+
+   Checkpoint: `lookUpProperty` takes `findMethod` as a function rather than a
+   map. Nothing today needs that. What in chapter 13 will?
 
 2. **Open** — getter methods, whose body runs on property access:
 

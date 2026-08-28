@@ -34,12 +34,14 @@ type Block struct {
 func (e *Block) Accept(v StmtVisitor) any { return v.VisitBlockStmt(e) }
 func (e *Block) isStmt()                  {}
 
-// Class binds Name to a class whose instances carry Methods.
-// Methods are *Function rather than Stmt because every consumer wants the
+// Class binds Name to a class whose instances carry Methods and which
+// itself carries ClassMethods — the ones declared with a leading `class`.
+// Both are *Function rather than Stmt because every consumer wants the
 // concrete node: a method is never executed as a statement.
 type Class struct {
-	Name    token.Token
-	Methods []*Function
+	Name         token.Token
+	Methods      []*Function
+	ClassMethods []*Function
 }
 
 func (e *Class) Accept(v StmtVisitor) any { return v.VisitClassStmt(e) }

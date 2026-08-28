@@ -5,6 +5,22 @@ import (
 	"compiler101/pkg/errors"
 )
 
+// propertyOwner is anything `.` works on. Two types satisfy it: an instance,
+// and — since the class-methods challenge — a class, because static methods and
+// static fields are reached through the same syntax as everything else.
+//
+// The interpreter switches on this interface rather than on *LoxInstance, which
+// is what keeps VisitGetExpr from having to know the two cases apart.
+type propertyOwner interface {
+	get(name token.Token) (any, *errors.RuntimeError)
+	set(name token.Token, value any)
+}
+
+var (
+	_ propertyOwner = (*LoxInstance)(nil)
+	_ propertyOwner = (*LoxClass)(nil)
+)
+
 // LoxInstance is the runtime form of an object: the class it was made from,
 // plus whatever fields have been written to it.
 //
@@ -23,29 +39,8 @@ func newLoxInstance(class *LoxClass) *LoxInstance {
 	return &LoxInstance{class: class, fields: make(map[string]any)}
 }
 
-// get resolves a property: fields first, then the class's methods.
-//
-// The order is the language design decision the chapter dwells on. A field
-// shadows a method of the same name, which means `object.method` may return
-// something that is not the method — and that is deliberate, because a field
-// holding a function has to be callable the same way.
-//
-// It returns an error rather than panicking with a runtime signal, mirroring
-// Environment.Get: the caller in the interpreter owns the unwinding.
 func (o *LoxInstance) get(name token.Token) (any, *errors.RuntimeError) {
-	if value, ok := o.fields[name.Lexeme]; ok {
-		return value, nil
-	}
-	if method := o.class.findMethod(name.Lexeme); method != nil {
-		// Binding here, at access time, is what makes a method reference a
-		// closure over its receiver: the returned function keeps working after
-		// the expression that found it is gone.
-		return method.bind(o), nil
-	}
-	return nil, &errors.RuntimeError{
-		Token:   name,
-		Message: "Undefined property '" + name.Lexeme + "'.",
-	}
+	return lookUpProperty(o, o.fields, o.class.findMethod, name)
 }
 
 // set always succeeds. There is no such thing as an undefined field to assign
@@ -55,3 +50,39 @@ func (o *LoxInstance) set(name token.Token, value any) {
 }
 
 func (o *LoxInstance) String() string { return o.class.name + " instance" }
+
+// lookUpProperty is the fields-then-methods rule, in one place because both
+// instances and classes obey it.
+//
+// The order is the language design decision the chapter dwells on. A field
+// shadows a method of the same name, which means `object.method` may return
+// something that is not the method — and that is deliberate, because a field
+// holding a function has to be callable the same way.
+//
+// receiver is what a found method binds to: the instance for an instance
+// method, the class itself for a class method. findMethod is a function rather
+// than a map so each caller decides where methods come from — and so chapter
+// 13 can walk a superclass chain without changing this.
+//
+// It returns an error rather than panicking with a runtime signal, mirroring
+// Environment.Get: the caller in the interpreter owns the unwinding.
+func lookUpProperty(
+	receiver any,
+	fields map[string]any,
+	findMethod func(string) *LoxFunction,
+	name token.Token,
+) (any, *errors.RuntimeError) {
+	if value, ok := fields[name.Lexeme]; ok {
+		return value, nil
+	}
+	if method := findMethod(name.Lexeme); method != nil {
+		// Binding here, at access time, is what makes a method reference a
+		// closure over its receiver: the returned function keeps working after
+		// the expression that found it is gone.
+		return method.bind(receiver), nil
+	}
+	return nil, &errors.RuntimeError{
+		Token:   name,
+		Message: "Undefined property '" + name.Lexeme + "'.",
+	}
+}

@@ -28,9 +28,12 @@ func (f *LoxFunction) Arity() int { return len(f.declaration.Params) }
 // The single Define lands in slot 0 because a local environment appends, and
 // slot 0 is exactly where the resolver looks — it opens one scope per class and
 // declares `this` first in it. The two have to agree; see resolver.VisitClassStmt.
-func (f *LoxFunction) bind(instance *LoxInstance) *LoxFunction {
+//
+// receiver is `any` rather than *LoxInstance because a class method binds to
+// the class. Nothing here inspects it: `this` is just a value in a slot.
+func (f *LoxFunction) bind(receiver any) *LoxFunction {
 	environment := NewEnvironment(f.closure)
-	environment.Define("this", instance)
+	environment.Define("this", receiver)
 	return newLoxFunction(f.declaration, environment, f.isInitializer)
 }
 

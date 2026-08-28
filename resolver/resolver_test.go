@@ -492,3 +492,29 @@ func TestResolverWarnsAboutAnUnusedLocalClass(t *testing.T) {
 		t.Errorf("warnings = %v, want exactly [%s]", warnings, want)
 	}
 }
+
+// TestResolverAcceptsThisInAClassMethod: challenge 1's payoff. A class method
+// shares the class scope, so `this` resolves there and means the class — which
+// is exactly what the runtime binds.
+func TestResolverAcceptsThisInAClassMethod(t *testing.T) {
+	defer loxerrors.Reset()
+
+	for _, source := range []string{
+		`class Math { class square(n) { return n * n; } class cube(n) { return n * this.square(n); } }`,
+		// A class method named init is not an initializer, so returning a
+		// value from one is fine.
+		`class C { class init() { return 1; } }`,
+	} {
+		t.Run(source, func(t *testing.T) {
+			loxerrors.Reset()
+
+			errs, warnings := resolveSource(t, source)
+			if len(errs) != 0 {
+				t.Errorf("errors = %v, want none", errs)
+			}
+			if len(warnings) != 0 {
+				t.Errorf("warnings = %v, want none", warnings)
+			}
+		})
+	}
+}

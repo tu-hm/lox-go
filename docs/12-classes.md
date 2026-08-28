@@ -3,11 +3,12 @@
 Implementation of [Classes](https://craftinginterpreters.com/classes.html) for
 this repository's tree-walking interpreter.
 
-> Status: core chapter implemented. Class declarations, instances, property get
-> and set, methods, `this`, and `init()` all work, on both parser front ends and
-> at every supported lookahead. Two static errors and three runtime errors are
-> new. The code challenges — static methods and getters — are not implemented
-> yet; see [Scope boundary](#scope-boundary).
+> Status: core chapter implemented, plus challenge 1 (class methods). Class
+> declarations, instances, property get and set, methods, `this`, `init()`, and
+> `class`-prefixed class methods all work, on both parser front ends and at
+> every supported lookahead. Two static errors and three runtime errors are new.
+> Challenge 2 (getters) is not implemented yet; see
+> [Scope boundary](#scope-boundary).
 
 For a guided walkthrough, follow the [Chapter 12 learning plan](12-learning-plan.md).
 
@@ -172,6 +173,10 @@ Only instances have fields.                     a Set on a non-instance
 Undefined property 'x'.                         no such field and no such method
 ```
 
+Since challenge 1, a class is a property owner too, so the first two apply only
+to values that are neither — a number, a string, a boolean, `nil`, or a plain
+function.
+
 `VisitSetExpr` evaluates the object before the value, matching source order, so
 a bad target is reported before the right-hand side runs at all.
 
@@ -185,6 +190,70 @@ The flip side is worth knowing: a bare REPL expression skips resolution
 entirely, so `this` typed at the prompt is *not* caught as the static error it
 would be in a script. It falls through to the global lookup and fails there.
 `TestBareThisAtTheReplIsARuntimeError` pins that.
+
+## Challenge 1 — class methods, without metaclasses
+
+```lox
+class Math {
+  class square(n) { return n * n; }
+  class cube(n) { return n * this.square(n); }
+}
+print Math.cube(3); // 27
+```
+
+A leading `class` inside a class body puts the method on the class. Reusing the
+keyword costs no lookahead: `class` cannot begin a method name, so one token
+settles which list the method joins, and both front ends handle it in the same
+orchestration layer that already handled the body — the LL(k) table is
+untouched.
+
+**The book's hint does not translate.** It suggests making `LoxClass` extend
+`LoxInstance`, so a class becomes an instance of a metaclass and `Math.square`
+needs no new lookup path at all. In Go, embedding is not subtyping, and it fails
+in two separate ways:
+
+- `object.(*LoxInstance)` does not match a `*LoxClass` that embeds one. Every
+  type switch in the interpreter would silently stop working for classes.
+- Worse, a promoted method receives the *embedded* value. Inside
+  `LoxInstance.get`, the receiver is the inner `*LoxInstance`, not the outer
+  `*LoxClass` — so `method.bind(o)` would bind `this` to a hidden object the
+  program can never otherwise reach.
+
+The second one is the real obstacle: it needs a back-pointer from the embedded
+instance to whatever embeds it, and at that point the embedding has stopped
+saving anything.
+
+What is here instead: `LoxClass` carries its own `classMethods` and `fields`
+maps and implements `get`/`set` directly, and the fields-then-methods rule lives
+once in `lookUpProperty`, shared by both types. `VisitGetExpr` and
+`VisitSetExpr` switch on a `propertyOwner` interface rather than on
+`*LoxInstance`, which is the one line of the interpreter that had to change.
+
+Two things fall out for free:
+
+- **Static fields.** `Math.description = "arithmetic"` works, because a class is
+  a property owner and assignment is what creates a field. That was the point of
+  the metaclass hint, and it survives without it.
+- **`this` in a class method is the class.** `bind` takes `any` now, and nothing
+  in it inspects the receiver — `this` is just a value in slot 0. So
+  `this.square(n)` inside a class method reaches a sibling class method exactly
+  as an instance method reaches its siblings, because the resolver puts class
+  methods in the *same* class scope.
+
+Two behaviours worth stating, since neither is arbitrary:
+
+- The namespaces are separate in both directions. `C.instanceMethod` and
+  `C().classMethod` are both `Undefined property`, because `findMethod` and
+  `findClassMethod` read different maps. This changed one existing message:
+  `C.m` used to be `Only instances have properties.`, and now the class *is* a
+  valid owner that simply lacks the property.
+- A class method named `init` is not a constructor. Construction happens to
+  instances, and a class method never receives one, so `isInitializer` is false
+  regardless of the name and returning a value from it is legal.
+
+`findMethod` is passed to `lookUpProperty` as a function rather than a map for
+chapter 13's benefit: walking a superclass chain then changes one closure, not
+the shared rule.
 
 ## Challenge 3 — how open should fields be?
 
@@ -243,9 +312,9 @@ env GOTOOLCHAIN=go1.26.6 go run . -print=ast examples/classes.lox
 
 ## Scope boundary
 
-Both code challenges are open, and both have a sketch in the
-[learning plan](12-learning-plan.md#challenges): static methods via a metaclass,
-and getter methods. Challenge 3 is answered above.
+Challenge 1 is implemented, without metaclasses — see above for why. Challenge 3
+is answered above. Challenge 2, getter methods, is still open; there is a sketch
+in the [learning plan](12-learning-plan.md#challenges).
 
 Chapter 13 adds inheritance, and two things in this chapter are where it will
 push. `super` needs a second synthetic scope, which means the class scope stops

@@ -861,9 +861,17 @@ func TestClassRuntimeErrors(t *testing.T) {
 			message: "Only instances have fields.",
 		},
 		{
-			name:    "property read on a class rather than an instance",
+			// A class owns properties of its own since the class-methods
+			// challenge, so this is no longer "only instances have properties":
+			// the class is a valid owner, it just has no such property.
+			name:    "an instance method is not reachable through the class",
 			source:  `class C { m() { return 1; } } print C.m;`,
-			message: "Only instances have properties.",
+			message: "Undefined property 'm'.",
+		},
+		{
+			name:    "a class method is not reachable through an instance",
+			source:  `class C { class m() { return 1; } } print C().m;`,
+			message: "Undefined property 'm'.",
 		},
 		{
 			name:    "property that was never assigned and is not a method",
@@ -957,5 +965,60 @@ func TestParserFrontEndsExecuteClassesEqually(t *testing.T) {
 	}
 	if outputs[0] != "42\n" || outputs[1] != outputs[0] {
 		t.Errorf("recursive descent = %q, LL(k) = %q, want 42", outputs[0], outputs[1])
+	}
+}
+
+// TestClassMethods covers challenge 1. A class is a property owner in its own
+// right, which is what lets `Math.square(3)` use the same syntax and the same
+// binding machinery as an instance method.
+func TestClassMethods(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		class Math {
+			class square(n) { return n * n; }
+			// this, inside a class method, is the class -- so one class
+			// method can reach another through it. That is the whole reason
+			// the resolver puts class methods in the same scope as instance
+			// methods.
+			class cube(n) { return n * this.square(n); }
+		}
+		print Math.square(3);
+		print Math.cube(3);
+		print Math.square;
+
+		// A class method is a value like any other, and it stays bound.
+		var squarer = Math.square;
+		print squarer(5);
+
+		// Static fields fall out for free: a class owns properties, and
+		// assigning one is what creates it.
+		Math.name = "arithmetic";
+		print Math.name;
+
+		// The two namespaces are separate in both directions.
+		class Mixed {
+			init() { this.tag = "instance"; }
+			onInstance() { return this.tag; }
+			class onClass() { return "class"; }
+		}
+		print Mixed().onInstance();
+		print Mixed.onClass();
+
+		// A class method named init is not a constructor: construction happens
+		// to instances, and a class method never receives one.
+		class Odd {
+			class init() { return "just a class method"; }
+		}
+		print Odd.init();
+		print Odd();
+	`)
+
+	if err := execute(t, interp, program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	want := "9\n27\n<fn square>\n25\narithmetic\ninstance\nclass\njust a class method\nOdd instance\n"
+	if got := out.String(); got != want {
+		t.Errorf("output = %q, want %q", got, want)
 	}
 }

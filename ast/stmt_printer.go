@@ -47,10 +47,16 @@ func (p *StmtPrinter) VisitBlockStmt(stmt *Block) any {
 // a plain function print identically. That is honest: at this point in the book
 // they differ only in where the runtime stores them.
 func (p *StmtPrinter) VisitClassStmt(stmt *Class) any {
-	parts := make([]string, 0, len(stmt.Methods)+2)
+	parts := make([]string, 0, len(stmt.Methods)+len(stmt.ClassMethods)+2)
 	parts = append(parts, "class", stmt.Name.Lexeme)
 	for _, method := range stmt.Methods {
 		parts = append(parts, p.VisitFunctionStmt(method).(string))
+	}
+	// A class method prints as "static" rather than "fun", because the
+	// difference is not visible anywhere else in the rendered tree.
+	for _, method := range stmt.ClassMethods {
+		body := p.VisitFunctionStmt(method).(string)
+		parts = append(parts, "(static "+strings.TrimPrefix(body, "(fun "))
 	}
 	return "(" + strings.Join(parts, " ") + ")"
 }

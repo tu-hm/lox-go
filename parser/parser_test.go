@@ -578,3 +578,44 @@ func TestClassAndPropertyParseErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestParseClassMethods covers challenge 1's syntax. Reusing `class` as the
+// modifier costs no lookahead: `class` cannot begin a method name, so one token
+// settles which list the method joins.
+func TestParseClassMethods(t *testing.T) {
+	defer errors.Reset()
+
+	statements, errs := parserFor(t, `
+		class Math {
+			class square(n) { return n * n; }
+			describe() { return "math"; }
+			class cube(n) { return n * n * n; }
+		}
+	`).ParseProgram()
+	if len(errs) != 0 {
+		t.Fatalf("ParseProgram: %v", errs)
+	}
+
+	class, ok := statements[0].(*ast.Class)
+	if !ok {
+		t.Fatalf("statement = %T, want *ast.Class", statements[0])
+	}
+	if len(class.Methods) != 1 || class.Methods[0].Name.Lexeme != "describe" {
+		t.Errorf("Methods = %v, want just describe", class.Methods)
+	}
+	if len(class.ClassMethods) != 2 {
+		t.Fatalf("ClassMethods has %d entries, want 2", len(class.ClassMethods))
+	}
+	if class.ClassMethods[0].Name.Lexeme != "square" || class.ClassMethods[1].Name.Lexeme != "cube" {
+		t.Errorf("ClassMethods = %v, want square then cube", class.ClassMethods)
+	}
+
+	// The printer distinguishes the two, which is the only place the tree shows
+	// which list a method landed in.
+	want := "(class Math (fun describe () (block (return math))) " +
+		"(static square (n) (block (return (* n n)))) " +
+		"(static cube (n) (block (return (* (* n n) n)))))"
+	if got := renderStatements(statements); got[0] != want {
+		t.Errorf("render =\n  %s\nwant\n  %s", got[0], want)
+	}
+}
