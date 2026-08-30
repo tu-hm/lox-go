@@ -309,6 +309,11 @@ func loxGrammar() *grammar {
 		g.fail[name] = expectExpr
 	}
 	g.fail[nCallTail] = expectEnd
+	// Both optional rules can only fail to predict when the thing they are
+	// optional *within* is unfinished, so each borrows that statement's message
+	// rather than falling back to the generated "Expect one of ..." list.
+	g.fail[nVarInitializer] = "Expect ';' after variable declaration."
+	g.fail[nReturnValue] = expectExpr
 	g.fail[nProgram] = expectStmt
 	g.fail[nDeclarations] = expectStmt
 	g.fail[nDeclaration] = expectStmt

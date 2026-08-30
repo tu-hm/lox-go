@@ -76,6 +76,48 @@ func (t *table) predict(head string, la seq) (production, bool) {
 	return t.g.prods[i], true
 }
 
+// recover is the error path's second chance, and it exists to buy back the one
+// thing this parser's messages otherwise cost.
+//
+// When predict misses, the parser knows the input is wrong but not which part.
+// All it can say is the message attached to the nonterminal — and with k > 1
+// that lands further out than a hand-written parser would put it. `egg.;` fails
+// at callTail rather than at the missing property name, because the whole
+// two-token window `. ;` matches no production of callTail; at k = 3 it fails
+// further out still, before `egg` is even consumed. Wider lookahead notices the
+// mistake earlier and so describes it less specifically, which is a bad trade
+// for a message a human reads.
+//
+// So: find the production whose lookahead comes closest to the window, measured
+// by longest common prefix, and expand it anyway. The driver then matches the
+// prefix that did agree and fails on the first terminal that did not — with the
+// message the grammar attached to that terminal. That is exactly the token and
+// exactly the message recursive descent reports, at every k.
+//
+// This cannot make a bad program parse. A production whose lookahead set lacks
+// the window derives nothing that starts with the window, so committing to it
+// can only move the failure, never avoid one. Nor can it loop: the grammar is
+// LL(k), so it has no left recursion and expansion reaches a terminal in a
+// bounded number of steps.
+//
+// A tie means two productions match the window equally well and neither is
+// evidence over the other, so the generic message stands rather than a guess.
+func (t *table) recover(head string, la seq) (production, bool) {
+	best, longest, tied := production{}, 0, false
+	for _, i := range t.g.byHead[head] {
+		switch n := t.sets.lookahead(t.g.prods[i]).nearest(la); {
+		case n > longest:
+			best, longest, tied = t.g.prods[i], n, false
+		case n == longest && n > 0:
+			tied = true
+		}
+	}
+	if longest == 0 || tied {
+		return production{}, false
+	}
+	return best, true
+}
+
 // fail is the message for a prediction miss. The grammar names most of them;
 // the fallback lists what the row would have accepted, which beats a bare
 // "syntax error" when a new rule forgets its message.

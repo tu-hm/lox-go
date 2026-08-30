@@ -800,41 +800,74 @@ func TestClassAndPropertyErrorsForEveryK(t *testing.T) {
 	}
 }
 
-// TestPropertyNameErrorMovesWithK pins the cost of the table, rather than
-// hiding it. `egg.;` is rejected at every k, but not by the same rule:
+// TestErrorMessagesDoNotDependOnK is what table.recover buys.
 //
-//	k=1  callTail predicts the '.' production, matches '.', then IDENTIFIER
-//	     fails — "Expect property name after '.'.", the same message
-//	     recursive descent gives.
-//	k=2  the window is `. ;`. No callTail production predicts it and neither
-//	     does ε, so the failure is one step earlier, at callTail itself.
-//	k=3  the window reaches back far enough that `call` itself cannot be
-//	     predicted, and the error lands on the whole expression.
+// Without it, a prediction miss is reported at whichever rule the k-token
+// window first failed to match — so `egg.;` said "Expect property name after
+// '.'." at k=1, "Expect end of expression." at k=2, and "Expect expression." at
+// k=3. Wider lookahead noticed the same mistake earlier and therefore described
+// it less specifically, which is the wrong direction for a message a human
+// reads.
 //
-// Wider lookahead notices the same mistake sooner and therefore describes it
-// less specifically. That is the trade docs/llk-parser.md argues about, and it
-// is why DefaultK is 1.
-func TestPropertyNameErrorMovesWithK(t *testing.T) {
+// recover expands the closest production anyway, so the failure lands on the
+// terminal that actually disagrees and carries that terminal's own message. The
+// message is then a property of the mistake, not of the lookahead.
+func TestErrorMessagesDoNotDependOnK(t *testing.T) {
 	defer errors.Reset()
 
-	for k, want := range map[int]string{
-		1: "Expect property name after '.'.",
-		2: "Expect end of expression.",
-		3: "Expect expression.",
+	sources := []string{
+		"egg.;", "egg.3;", "a.b.;", "a.b.c.;", "this.;",
+		"print a.;", "var x = a.;", "{ a.; }", "f(a.);", "a.b = ;",
+		"1 +", "1 2", "(1 + 2", "var a", "return", "print;",
+		"class C { m }", "if true) 1;", "a = ;", "(a) = 1;",
+	}
+
+	for _, src := range sources {
+		t.Run(src, func(t *testing.T) {
+			var atK []string
+			for k := MinK; k <= MaxK; k++ {
+				errors.Reset()
+				_, errs := parserFor(t, src, k).ParseProgram()
+				if len(errs) == 0 {
+					t.Fatalf("k=%d: %q parsed cleanly, want an error", k, src)
+				}
+				atK = append(atK, errs[0].Error())
+			}
+			for k, got := range atK {
+				if got != atK[0] {
+					t.Errorf("k=%d gave %q, but k=%d gave %q", k+MinK, got, MinK, atK[0])
+				}
+			}
+		})
+	}
+}
+
+// TestRecoverStillRejectsBadPrograms is the safety property recover has to
+// have. It expands a production the table did *not* predict, so the question is
+// whether that can make a malformed program parse: it cannot, because a
+// production whose lookahead set lacks the window derives nothing starting with
+// the window, so committing to it moves the failure rather than avoiding it.
+//
+// The test is the empirical half of that argument, and it also pins that the
+// recovery terminates rather than expanding forever.
+func TestRecoverStillRejectsBadPrograms(t *testing.T) {
+	defer errors.Reset()
+
+	for _, src := range []string{
+		"egg.;", "egg.3;", "a.b.;", "this.;",
+		"a.b = ;", "f(a.);", "var x = a.;", "class C { m }", "class C { class }",
+		"1 +", "1 2", "(1 + 2", "*", ")", "a = ;", "(a) = 1;", "var a", "return",
+		"fun f {}", "class C", "if true) 1;", "while (1 2;", "for (;;",
 	} {
-		_, errs := parserFor(t, "egg.;", k).ParseProgram()
-		if len(errs) == 0 {
-			t.Fatalf("k=%d: no error for %q", k, "egg.;")
-		}
-		if parseErr, ok := errs[0].(*errors.ParseError); !ok || parseErr.Message != want {
-			t.Errorf("k=%d error = %v, want %q", k, errs[0], want)
+		for k := MinK; k <= MaxK; k++ {
+			errors.Reset()
+			if _, errs := parserFor(t, src, k).ParseProgram(); len(errs) == 0 && !errors.HadError {
+				t.Errorf("k=%d: %q was accepted, want a syntax error", k, src)
+			}
 		}
 	}
 }
 
-// TestClassMethodsForEveryK: the `class` modifier is handled in the
-// orchestration layer, not the table, so it costs the grammar nothing and
-// behaves identically at every lookahead.
 func TestClassMethodsForEveryK(t *testing.T) {
 	defer errors.Reset()
 

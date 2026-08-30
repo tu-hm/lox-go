@@ -253,21 +253,73 @@ same line, different message (`Expect end of expression.` either way here, but
 raised from different places). That is the LL "viable prefix" property: the
 parser never consumes a token that cannot be part of a valid program.
 
-Chapter 12's property access shows the same effect costing something legible.
-`egg.;` is rejected at every `k`, but by a different rule each time:
+Chapter 12's property access showed that same effect costing something legible.
+`egg.;` was rejected at every `k`, but by a different rule each time:
 
-| `k` | fails at | message |
+| `k` | failed at | message |
 |---|---|---|
 | 1 | the `IDENTIFIER` terminal inside the `.` production | `Expect property name after '.'.` |
 | 2 | `callTail`, where the window `. ;` predicts nothing | `Expect end of expression.` |
 | 3 | `call`, which cannot be predicted at all | `Expect expression.` |
 
-Only `k = 1` gives the message recursive descent gives, because only at `k = 1`
-does the parser commit to the `.` production before discovering the problem.
-Wider lookahead notices the same mistake *sooner* and therefore describes it
+Only `k = 1` gave the message recursive descent gives, because only at `k = 1`
+did the parser commit to the `.` production before discovering the problem.
+Wider lookahead noticed the same mistake *sooner* and therefore described it
 *less* specifically — the viable-prefix property working against readability.
-This is the sharpest argument in the repo for `DefaultK = 1`, and
-`TestPropertyNameErrorMovesWithK` pins all three rather than hiding the spread.
+
+### Recovery: buying the message back
+
+`table.recover` fixes that, and it generalises. When `predict` misses, the
+parser already knows the input is bad; the only open question is what to *say*.
+So instead of reporting the rule's generic message, it finds the production
+whose lookahead comes closest to the window — longest common prefix — and
+expands that one anyway. The driver then matches the prefix that did agree and
+fails on the first terminal that did not, carrying the message the grammar
+attached to that terminal. `egg.;` now says `Expect property name after '.'.` at
+every `k`, and so does recursive descent.
+
+Chapter 13's `super` production has the same shape — `SUPER "." IDENTIFIER`,
+three terminals deep — and would have had the same problem at `k = 3`. It does
+not, because recovery is a property of the driver rather than of any one rule.
+
+Two properties make this safe rather than a guess:
+
+- **It cannot accept a bad program.** A production whose lookahead set does not
+  contain the window derives nothing that starts with the window, so committing
+  to it moves the failure and can never avoid one.
+  `TestRecoverStillRejectsBadPrograms` is the empirical half of that.
+- **It cannot loop.** The grammar is LL(k) and therefore has no left recursion,
+  so expansion reaches a terminal in a bounded number of steps.
+
+A tie — two productions matching the window equally well — falls back to the
+generic message, because neither is evidence over the other.
+
+None of this weakens the conflict check. The table is built exactly as before,
+and recovery only runs on a path that was already an error.
+
+`TestErrorMessagesDoNotDependOnK` pins the k-independence;
+`TestErrorMessagesMatchRecursiveDescent` in `parser/algorithm_test.go` pins the
+agreement with the other front end.
+
+### What recovery does not fix
+
+Two inputs still differ between the front ends, and they are a different
+problem:
+
+```
+1 2           rd: Expect ';' after expression.   llk: Expect end of expression.
+while (1 2;   rd: Expect ')' after condition.    llk: Expect end of expression.
+```
+
+Both parsers stop at the same token, and both are right. The LL(k) parser fails
+at a *tail* rule, having correctly decided the expression is over — and a tail
+rule cannot know whether it sits inside a `while` header or a bare statement, so
+it has no way to say "after condition". That is the table trading context for
+checkability, and no message table closes it.
+
+It is stable across `k`, which is the part that matters: what remains is a
+structural difference between the two algorithms, not an artifact of how far the
+parser happened to look.
 
 ## 8. Reading the table
 

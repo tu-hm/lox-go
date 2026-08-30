@@ -545,7 +545,16 @@ func (p *Parser) run(start string) (any, error) {
 		case itemNonterminal:
 			prod, ok := p.tab.predict(it.name, p.window())
 			if !ok {
-				return nil, errors.ParseErrorAt(p.peek(), p.tab.fail(it.name))
+				// Prediction missed, so the input is already known to be bad.
+				// Expanding the closest production anyway lets the failure
+				// surface at the terminal that actually disagrees, carrying
+				// that terminal's own message instead of the rule's generic
+				// one. See table.recover for why this cannot accept a bad
+				// program or fail to terminate.
+				prod, ok = p.tab.recover(it.name, p.window())
+				if !ok {
+					return nil, errors.ParseErrorAt(p.peek(), p.tab.fail(it.name))
+				}
 			}
 			for i := len(prod.body) - 1; i >= 0; i-- {
 				p.work = append(p.work, prod.body[i])

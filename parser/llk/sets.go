@@ -65,6 +65,17 @@ func (s seq) String() string {
 	return s.key()
 }
 
+// commonPrefix is the length of the longest prefix a and b share. It is the
+// measure the error path uses to ask "which production did the input almost
+// match", and nothing on the success path needs it: prediction is exact.
+func commonPrefix(a, b seq) int {
+	n := 0
+	for n < len(a) && n < len(b) && a[n] == b[n] {
+		n++
+	}
+	return n
+}
+
 // kset is a set of k-strings, keyed by seq.key.
 type kset map[string]seq
 
@@ -116,6 +127,19 @@ func (s kset) sorted() []seq {
 		out[i] = s[k]
 	}
 	return out
+}
+
+// nearest is how close a set comes to a k-string it does not contain: the
+// length of the longest prefix any of its members shares with la. Zero means
+// the set has nothing to say about this window at all.
+func (s kset) nearest(la seq) int {
+	best := 0
+	for _, x := range s {
+		if n := commonPrefix(x, la); n > best {
+			best = n
+		}
+	}
+	return best
 }
 
 // allFull reports whether every string in the set is full, i.e. no further

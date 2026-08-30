@@ -373,14 +373,17 @@ Class declarations join function declarations in the orchestration layer: a
 class body is a repetition of a rule whose own body contains recoverable
 declarations, which is exactly what that layer is for.
 
-One visible cost of the table shows up here. `egg.;` is rejected at every `k`,
-but not by the same rule — at `k=1` the `.` production is predicted and the
+A visible cost of the table used to show up here. `egg.;` is rejected at every
+`k`, but not by the same rule — at `k=1` the `.` production is predicted and the
 `IDENTIFIER` match fails, giving the specific "Expect property name after
 '.'."; at `k=2` the window `. ;` matches no production of `callTail` at all, so
-the failure is one step earlier and the message more generic. Wider lookahead
-notices the same mistake sooner and therefore describes it less precisely.
-`TestPropertyNameErrorMovesWithK` pins all three messages rather than hiding
-the difference.
+the failure was one step earlier and the message more generic.
+
+`table.recover` closes that: on a prediction miss the driver expands the
+production whose lookahead shares the longest prefix with the window, so the
+error lands on the terminal that actually disagrees and carries its message. All
+three lookaheads, and both front ends, now say "Expect property name after
+'.'." See [the LL(k) notes](llk-parser.md#recovery-buying-the-message-back).
 
 ## Notation
 

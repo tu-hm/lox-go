@@ -174,15 +174,71 @@ func TestAlgorithmsAgreeOnPrograms(t *testing.T) {
 	}
 }
 
+// TestErrorMessagesMatchRecursiveDescent: for a malformed construct inside a
+// rule, both front ends should say the same thing at every k.
+//
+// They did not, until parser/llk's table gained a recovery step. A prediction
+// miss used to be reported at whichever rule the k-token window first failed to
+// match, so the message got vaguer as k grew — `egg.;` named the missing
+// property at k=1 and did not at k=2 or k=3. Expanding the closest production
+// anyway puts the failure back on the terminal that disagrees, which is the
+// same terminal recursive descent stops at.
+//
+// The exceptions are listed in TestErrorPositionsMatch below and are a
+// different thing: there the two parsers stop at the same token for structurally
+// different reasons, and only the message differs.
+func TestErrorMessagesMatchRecursiveDescent(t *testing.T) {
+	defer errors.Reset()
+
+	sources := []string{
+		"egg.;", "egg.3;", "a.b.;", "a.b.c.;", "this.;",
+		"print a.;", "var x = a.;", "{ a.; }", "f(a.);", "a.b = ;",
+		"var a", "return", "print;", "class C { m }", "class C { () {} }",
+		"class {}", "class C", "fun f {}", "fun f(a,) {}",
+		"(1 + 2", "1 +", "a = ;", "(a) = 1;", "a.b() = 1;",
+	}
+
+	for _, src := range sources {
+		t.Run(src, func(t *testing.T) {
+			errors.Reset()
+			rd, _ := NewOf(Config{Kind: RecursiveDescent}, lexer.Lex(src))
+			_, rdErrs := rd.ParseProgram()
+			if len(rdErrs) == 0 {
+				t.Fatalf("recursive descent parsed %q cleanly, want an error", src)
+			}
+			want := rdErrs[0].Error()
+
+			for k := llk.MinK; k <= llk.MaxK; k++ {
+				errors.Reset()
+				ll, err := NewOf(Config{Kind: LLK, K: k}, lexer.Lex(src))
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, llErrs := ll.ParseProgram()
+				if len(llErrs) == 0 {
+					t.Fatalf("k=%d parsed %q cleanly, want an error", k, src)
+				}
+				if got := llErrs[0].Error(); got != want {
+					t.Errorf("k=%d:\n  rd  %s\n  llk %s", k, want, got)
+				}
+			}
+		})
+	}
+}
+
 // TestErrorPositionsMatch: both parsers must stop at the same token, even
-// though only the LL(k) one is required to by construction. Where they differ
-// is the message, and the two cases below are the ones that do — the LL(k)
-// parser notices at the tail rule that the expression is over, one rule before
-// recursive descent returns and checks for leftovers.
+// though only the LL(k) one is required to by construction.
+//
+// Two inputs still differ in the message, and they are the honest residue of
+// the table rather than a gap recovery can close. On `1 2` and `while (1 2;`
+// the LL(k) parser fails at a *tail* rule, having correctly decided the
+// expression is over; the tail cannot know whether it sits in a `while` header
+// or a statement, so it cannot produce "Expect ')' after condition." That is
+// the viable-prefix property costing context, and no message table fixes it.
 func TestErrorPositionsMatch(t *testing.T) {
 	defer errors.Reset()
 
-	for _, src := range []string{"(1 + 2", "1 +", "1 + 2)", "*", ")", "1 2"} {
+	for _, src := range []string{"(1 + 2", "1 +", "1 + 2)", "*", ")", "1 2", "egg.;"} {
 		errors.Reset()
 		rd, _ := NewOf(Config{Kind: RecursiveDescent}, lexer.Lex(src))
 		_, rdErr := rd.Parse()
