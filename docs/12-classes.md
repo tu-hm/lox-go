@@ -372,10 +372,17 @@ env GOTOOLCHAIN=go1.26.6 go run . -print=ast examples/classes.lox
 All three challenges are done: challenge 1 without metaclasses and challenge 2
 with a flag on the AST, both for reasons above, and challenge 3 in prose.
 
-Chapter 13 adds inheritance, and two things in this chapter are where it will
-push. `super` needs a second synthetic scope, which means the class scope stops
-holding exactly one binding and `receiver()`'s `GetAt(0, 0)` stops being obvious.
-And the superclass expression has to be evaluated and bound *before* the methods
-close over it, which is precisely the case the book's define-then-assign two-step
-exists to handle — so the single `Define` in `VisitClassStmt` will need
-revisiting with slots in mind.
+Chapter 13 adds inheritance, and two things in this chapter looked like where it
+would push. `super` needs a second synthetic scope, which seemed to mean the
+class scope would stop holding exactly one binding and `receiver()`'s
+`GetAt(0, 0)` would stop being obvious. And the superclass expression has to be
+evaluated and bound *before* the methods close over it, which is precisely the
+case the book's define-then-assign two-step exists to handle — so the single
+`Define` here looked like it would need revisiting.
+
+Neither bit, and for the same reason. The `super` scope goes *outside* the
+`this` scope rather than into it, so each still holds exactly one binding and
+slot 0 keeps meaning what it meant; and chapter 13 builds that scope as a local
+variable instead of swapping `i.environment`, so the one `Define` of the class
+name still lands in the enclosing scope at the slot the resolver numbered. See
+[Chapter 13 — inheritance](13-inheritance.md#two-synthetic-scopes-and-the-invariant-that-keeps-them-honest).

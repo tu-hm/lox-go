@@ -3,7 +3,8 @@
 Canonical copy of the grammar. Every chapter from here to the end of the book
 edits this file — chapter 6 rewrites the `expression` rule into a precedence
 ladder, chapter 8 adds statements, chapter 9 adds control flow, and chapter 10
-adds calls and user-defined functions, and chapter 12 adds classes.
+adds calls and user-defined functions, chapter 12 adds classes, and chapter
+13 adds inheritance.
 
 ## Chapter 5 — expressions (ambiguous)
 
@@ -256,6 +257,51 @@ nothing resolves it, because which properties an object has depends on which
 lines ran. That split — variables static, properties dynamic — is the whole
 subject of [Chapter 12 — classes](12-classes.md).
 
+## Chapter 13 — inheritance
+
+Chapter 13 adds an optional clause to one rule and one production to another.
+The grammar delta is the smallest of any chapter since 11; almost all of the
+work is in what the two names *mean*.
+
+```
+classDecl      → "class" IDENTIFIER ( "<" IDENTIFIER )? "{" function* "}" ;
+primary        → NUMBER | STRING | "true" | "false" | "nil" | "this"
+               | "(" expression ")" | IDENTIFIER
+               | "super" "." IDENTIFIER ;
+```
+
+Everything else is unchanged from chapter 12.
+
+Two things the notation is saying deliberately.
+
+**The superclass is `IDENTIFIER`, not `expression`.** A superclass is named,
+never computed, so `class A < f() {}` is a syntax error at the `(` rather than a
+call nobody wanted. Both front ends parse it straight into a `Variable` node —
+which is still a *variable use*, so it resolves like one and obeys scope.
+
+**`super` is never alone.** The production is `"super" "." IDENTIFIER`, three
+terminals in one rule, so a bare `super` is a parse error rather than something
+the resolver has to catch later. That is the grammar encoding a real fact:
+`super` names no value, only the place a method lookup starts.
+
+Three more rules the notation cannot state, all enforced by the resolver:
+
+```
+A class can't inherit from itself.               a superclass naming its own class
+Can't use 'super' outside of a class.            a Super expression with no enclosing class
+Can't use 'super' in a class with no superclass. a Super expression in a base class
+```
+
+The last two are separate because the mistakes are: one is a misplaced keyword,
+the other a class that forgot to say what it inherits from. And one rule the
+resolver cannot state either, because it is about a value rather than a name:
+
+```
+Superclass must be a class.                      the superclass name held something else
+```
+
+See [Chapter 13 — inheritance](13-inheritance.md).
+
 ## The LL(k) form — what the table-driven parser reads
 
 `parser/llk` parses the same language from the same grammar written differently,
@@ -373,6 +419,17 @@ Class declarations join function declarations in the orchestration layer: a
 class body is a repetition of a rule whose own body contains recoverable
 declarations, which is exactly what that layer is for.
 
+Chapter 13 adds one production to `primary`, and nothing else:
+
+```
+primary        → ... | "super" "." IDENTIFIER {mkSuper} ;
+```
+
+Three terminals in one production, so no lookahead window can split it and no
+other primary begins with `super`: still LL(1). The superclass clause is *not*
+in the table — like the class body it introduces, it is one optional token pair
+inside a repetition the orchestration layer already owns.
+
 A visible cost of the table used to show up here. `egg.;` is rejected at every
 `k`, but not by the same rule — at `k=1` the `.` production is predicted and the
 `IDENTIFIER` match fails, giving the specific "Expect property name after
@@ -409,8 +466,9 @@ three lookaheads, and both front ends, now say "Expect property name after
 | property read | `Get` | `Object Expr`, `Name token.Token` |
 | property write | `Set` | `Object Expr`, `Name token.Token`, `Value Expr` |
 | `this` | `This` | `Keyword token.Token` |
+| `super` | `Super` | `Keyword token.Token`, `Method token.Token` |
 | block | `Block` | `Statements []Stmt` |
-| class declaration | `Class` | `Name token.Token`, `Methods []*Function` |
+| class declaration | `Class` | `Name token.Token`, `Superclass *Variable`, `Methods []*Function`, `ClassMethods []*Function` |
 | expression statement | `Expression` | `Expression Expr` |
 | function declaration | `Function` | `Name token.Token`, `Params []token.Token`, `Body []Stmt` |
 | if statement | `If` | `Condition Expr`, `ThenBranch Stmt`, `ElseBranch Stmt` |

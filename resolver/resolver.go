@@ -58,14 +58,16 @@ const (
 	functionClassMethod
 )
 
-// classType is the same question one level up, and exists for exactly one
-// diagnostic: `this` outside any class. A bare currentClass flag would do
-// today, but chapter 13 adds a third state for a class with a superclass.
+// classType is the same question one level up. It started as one diagnostic —
+// `this` outside any class — and chapter 13 adds the third state, because
+// `super` needs to know not just that there is a class but that it has a
+// superclass to reach.
 type classType int
 
 const (
 	classNone classType = iota
 	classClass
+	classSubclass
 )
 
 // bindingKind is what a name was declared as. It only affects diagnostics: how
@@ -83,6 +85,10 @@ const (
 	// check. Without that exemption every class whose methods ignore `this`
 	// would warn.
 	bindingThis
+	// bindingSuper is the same arrangement for the superclass a subclass
+	// declaration captures, and exempt for the same reason: inheriting without
+	// ever writing `super` is the common case, not a mistake.
+	bindingSuper
 )
 
 func (k bindingKind) String() string {
@@ -165,9 +171,9 @@ func (r *Resolver) endScope() {
 	for _, b := range closing.order {
 		// A parameter is exempt: its presence is dictated by the caller's
 		// signature rather than by the body, and Lox has no way to spell
-		// "deliberately unused". Go draws the line in the same place. `this` is
-		// exempt because the source never declared it at all.
-		if b.kind == bindingParameter || b.kind == bindingThis || b.read {
+		// "deliberately unused". Go draws the line in the same place. `this`
+		// and `super` are exempt because the source never declared them at all.
+		if b.kind == bindingParameter || b.kind == bindingThis || b.kind == bindingSuper || b.read {
 			continue
 		}
 		r.warn(b.name, "Local "+b.kind.String()+" '"+b.name.Lexeme+"' is never used.")
@@ -248,14 +254,21 @@ func (r *Resolver) VisitVarStmt(stmt *ast.Var) any {
 	return nil
 }
 
-// VisitClassStmt opens one scope per class, holding nothing but `this`.
+// VisitClassStmt opens one scope per class, holding nothing but `this`, and —
+// for a subclass — one more outside it holding nothing but `super`.
 //
-// That scope is the pass's half of a bargain with the runtime: it is what
-// LoxFunction.bind creates, and `this` is the sole binding in it, so `this`
-// lives at slot 0 and a method body finds it one hop out. Declaring it here
-// rather than special-casing it in the interpreter is what lets `this` be read
-// through the same slot-addressed path as every other local — this
+// Those scopes are the pass's half of a bargain with the runtime: the inner one
+// is what LoxFunction.bind creates, and `this` is the sole binding in it, so
+// `this` lives at slot 0 and a method body finds it one hop out. The outer one
+// is what VisitClassStmt builds in the interpreter, with `super` as its sole
+// binding, so a method body finds that two hops out. Declaring both here rather
+// than special-casing them in the interpreter is what lets `this` and `super`
+// be read through the same slot-addressed path as every other local — this
 // implementation's local environments hold no names to look up.
+//
+// The `super` scope exists only when there is a superclass, in both passes. A
+// scope one side creates and the other does not is not a missing binding, it is
+// every distance inside the class body off by one.
 //
 // Method names are deliberately not declared. A method is reached through its
 // class's method map, never through a scope, so there is no binding to make and
@@ -267,6 +280,25 @@ func (r *Resolver) VisitClassStmt(stmt *ast.Class) any {
 
 	r.declare(stmt.Name, bindingClass)
 	r.define(stmt.Name)
+
+	if stmt.Superclass != nil {
+		// Inheriting from yourself is a static error and not a runtime one
+		// because it cannot be anything else: by the time the class object
+		// exists the name would have to already refer to it.
+		if stmt.Superclass.Name.Lexeme == stmt.Name.Lexeme {
+			r.fail(stmt.Superclass.Name, "A class can't inherit from itself.")
+		}
+		r.currentClass = classSubclass
+		// Resolved before the scope opens: the superclass name is an ordinary
+		// variable use in the enclosing scope, and resolving it here is also
+		// what stops it being reported as a local nobody reads.
+		r.resolveExpr(stmt.Superclass)
+
+		r.beginScope()
+		super := token.Token{Type: token.SUPER, Lexeme: "super", Line: stmt.Superclass.Name.Line}
+		r.declare(super, bindingSuper)
+		r.define(super)
+	}
 
 	r.beginScope()
 	this := token.Token{Type: token.THIS, Lexeme: "this", Line: stmt.Name.Line}
@@ -292,6 +324,9 @@ func (r *Resolver) VisitClassStmt(stmt *ast.Class) any {
 		r.resolveFunction(method, functionClassMethod)
 	}
 	r.endScope()
+	if stmt.Superclass != nil {
+		r.endScope()
+	}
 	return nil
 }
 
@@ -424,6 +459,28 @@ func (r *Resolver) VisitSetExpr(e *ast.Set) any {
 func (r *Resolver) VisitThisExpr(e *ast.This) any {
 	if r.currentClass == classNone {
 		r.fail(e.Keyword, "Can't use 'this' outside of a class.")
+		return nil
+	}
+	r.resolveLocal(e, e.Keyword, useRead)
+	return nil
+}
+
+// VisitSuperExpr resolves `super` as the local variable the superclass scope
+// declared, exactly as VisitThisExpr does for `this`. The method name after it
+// is not resolved at all: it is a property, looked up on a class the runtime
+// finds in that slot.
+//
+// The two errors are separate because the mistakes are: `super` outside a class
+// is a misplaced keyword, while `super` in a base class is a class that forgot
+// to say what it inherits from. Reporting either as the other sends the reader
+// to the wrong line.
+func (r *Resolver) VisitSuperExpr(e *ast.Super) any {
+	switch r.currentClass {
+	case classNone:
+		r.fail(e.Keyword, "Can't use 'super' outside of a class.")
+		return nil
+	case classClass:
+		r.fail(e.Keyword, "Can't use 'super' in a class with no superclass.")
 		return nil
 	}
 	r.resolveLocal(e, e.Keyword, useRead)

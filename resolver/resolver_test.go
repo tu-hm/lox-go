@@ -393,6 +393,41 @@ func TestResolverReportsClassStaticErrors(t *testing.T) {
 			lexeme:  "C",
 			message: "Already a variable with this name in this scope.",
 		},
+		{
+			name:    "super at the top level",
+			source:  `print super.method;`,
+			lexeme:  "super",
+			message: "Can't use 'super' outside of a class.",
+		},
+		{
+			name:    "super in a class with no superclass",
+			source:  `class C { m() { return super.m(); } }`,
+			lexeme:  "super",
+			message: "Can't use 'super' in a class with no superclass.",
+		},
+		{
+			name:    "a class inheriting from itself",
+			source:  `class C < C {}`,
+			lexeme:  "C",
+			message: "A class can't inherit from itself.",
+		},
+		{
+			name:    "a local class inheriting from itself, where the name does resolve",
+			source:  `{ class C < C {} print C; }`,
+			lexeme:  "C",
+			message: "A class can't inherit from itself.",
+		},
+		{
+			// The check is on the lexeme, which also rejects a subclass that
+			// meant to shadow an outer class of the same name. That is not an
+			// approximation: the class binding is declared before the clause is
+			// resolved, so the inner name is what the clause would find, and
+			// reading it would find a slot nothing has written yet.
+			name:    "a subclass shadowing an outer class of the same name",
+			source:  `class A {} { class A < A {} print A; }`,
+			lexeme:  "A",
+			message: "A class can't inherit from itself.",
+		},
 	}
 
 	for _, tt := range tests {
@@ -433,6 +468,16 @@ func TestResolverAcceptsLegalClassBindings(t *testing.T) {
 		// A method may be named after a keyword-adjacent word without becoming
 		// an initializer.
 		`class C { initialize() { return 1; } } print C().initialize();`,
+		// super in a subclass method, and in a closure nested inside one: the
+		// superclass scope is counted from the text like any other.
+		`class A { m() { return 1; } } class B < A { m() { return super.m(); } } print B().m();`,
+		`class A { m() { return 1; } } class B < A { m() { fun f() { return super.m(); } return f(); } } print B().m();`,
+		// super in a class method reaches the superclass's class methods, which
+		// is what `this` already means there.
+		`class A { class helper() { return 1; } } class B < A { class helper() { return super.helper(); } } print B.helper();`,
+		// A class two levels down still resolves: each subclass opens its own
+		// superclass scope, and each method counts its own distance.
+		`class A { m() { return 1; } } class B < A { m() { return super.m(); } } class C < B { m() { return super.m(); } } print C().m();`,
 	} {
 		t.Run(source, func(t *testing.T) {
 			loxerrors.Reset()
@@ -461,6 +506,32 @@ func TestResolverDoesNotWarnAboutThisOrMethodNames(t *testing.T) {
 		`{ class C { used() { return 1; } unused() { return 2; } } print C().used(); }`,
 		// this used in one method and not another.
 		`{ class C { a() { return this; } b() { return 1; } } print C().b(); }`,
+	} {
+		t.Run(source, func(t *testing.T) {
+			loxerrors.Reset()
+
+			errs, warnings := resolveSource(t, source)
+			if len(errs) != 0 {
+				t.Fatalf("errors = %v, want none", errs)
+			}
+			if len(warnings) != 0 {
+				t.Errorf("warnings = %v, want none", warnings)
+			}
+		})
+	}
+}
+
+// TestResolverDoesNotWarnAboutSuperOrTheSuperclassName covers chapter 13's
+// half of the exemption. `super` is declared by the pass rather than by the
+// source, so an inheriting class that never calls it must not warn — and the
+// superclass name is an ordinary read, so naming it in the clause is what keeps
+// it from being reported as an unused local.
+func TestResolverDoesNotWarnAboutSuperOrTheSuperclassName(t *testing.T) {
+	defer loxerrors.Reset()
+
+	for _, source := range []string{
+		`{ class A { m() { return 1; } } class B < A {} print B().m(); }`,
+		`{ class A { m() { return 1; } } class B < A { m() { return super.m(); } } print B().m(); }`,
 	} {
 		t.Run(source, func(t *testing.T) {
 			loxerrors.Reset()

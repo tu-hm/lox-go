@@ -51,6 +51,15 @@ func (p *RPNPrinter) VisitSetExpr(e *Set) any {
 	return p.Print(e.Object) + " " + p.Print(e.Value) + " " + e.Name.Lexeme + " .="
 }
 
+// VisitSuperExpr spells the lookup with the same postfix "." as a property get,
+// with the keyword standing where the object would. That reads as ambiguous and
+// is not: `super` is a keyword, so it can never be an object expression on its
+// own, and it can never be a property name either — a bare `super` before a "."
+// is only ever this.
+func (p *RPNPrinter) VisitSuperExpr(e *Super) any {
+	return e.Keyword.Lexeme + " " + e.Method.Lexeme + " ."
+}
+
 func (p *RPNPrinter) VisitThisExpr(e *This) any {
 	return e.Keyword.Lexeme
 }

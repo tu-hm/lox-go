@@ -23,6 +23,7 @@ type ExprVisitor interface {
 	VisitLiteralExpr(e *Literal) any
 	VisitLogicalExpr(e *Logical) any
 	VisitSetExpr(e *Set) any
+	VisitSuperExpr(e *Super) any
 	VisitThisExpr(e *This) any
 	VisitUnaryExpr(e *Unary) any
 	VisitVariableExpr(e *Variable) any
@@ -105,6 +106,17 @@ type Set struct {
 
 func (e *Set) Accept(v ExprVisitor) any { return v.VisitSetExpr(e) }
 func (e *Set) isExpr()                  {}
+
+// Super reads Method from the superclass of the class the enclosing method
+// was declared in, bound to the current receiver. Keyword is the name the
+// resolver binds; Method, like any property name, is resolved by nobody.
+type Super struct {
+	Keyword token.Token
+	Method  token.Token
+}
+
+func (e *Super) Accept(v ExprVisitor) any { return v.VisitSuperExpr(e) }
+func (e *Super) isExpr()                  {}
 
 // This reads the receiver of the enclosing method. Keyword locates the
 // "outside of a class" error, and is also the name the resolver binds.

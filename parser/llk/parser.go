@@ -181,11 +181,26 @@ func (p *Parser) declaration() (ast.Stmt, error) {
 // classDeclaration joins the orchestration layer for the same reason function
 // does: a class body is a repetition of a rule that itself contains a
 // recoverable block, and recovery is what this layer exists for.
+//
+// The superclass clause is read here rather than through the table for the
+// same reason: it is one optional token pair in the middle of that repetition.
+// `super` itself is a table production, because it is an expression.
 func (p *Parser) classDeclaration() (ast.Stmt, error) {
 	name, err := p.consume(token.IDENTIFIER, "Expect class name.")
 	if err != nil {
 		return nil, err
 	}
+
+	var superclass *ast.Variable
+	if p.check(token.LESS) {
+		p.advance()
+		superName, err := p.consume(token.IDENTIFIER, "Expect superclass name.")
+		if err != nil {
+			return nil, err
+		}
+		superclass = &ast.Variable{Name: superName}
+	}
+
 	if !p.check(token.LEFT_BRACE) {
 		return nil, errors.ParseErrorAt(p.peek(), "Expect '{' before class body.")
 	}
@@ -213,7 +228,7 @@ func (p *Parser) classDeclaration() (ast.Stmt, error) {
 	if _, err := p.consume(token.RIGHT_BRACE, "Expect '}' after class body."); err != nil {
 		return nil, err
 	}
-	return &ast.Class{Name: name, Methods: methods, ClassMethods: classMethods}, nil
+	return &ast.Class{Name: name, Superclass: superclass, Methods: methods, ClassMethods: classMethods}, nil
 }
 
 func (p *Parser) function(kind string) (*ast.Function, error) {

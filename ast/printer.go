@@ -47,6 +47,13 @@ func (p *Printer) VisitSetExpr(e *Set) any {
 	return "(.= " + p.Print(e.Object) + " " + e.Name.Lexeme + " " + p.Print(e.Value) + ")"
 }
 
+// VisitSuperExpr does not reuse the "(. ...)" form, because there is no object
+// subexpression to put there: `super` is a keyword naming where a lookup
+// starts, not a value being read from.
+func (p *Printer) VisitSuperExpr(e *Super) any {
+	return "(super " + e.Method.Lexeme + ")"
+}
+
 func (p *Printer) VisitThisExpr(e *This) any {
 	return e.Keyword.Lexeme
 }

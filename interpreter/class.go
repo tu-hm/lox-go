@@ -21,7 +21,11 @@ import (
 // shared lookUpProperty get the same behaviour without the indirection — and
 // `this` inside a class method is the class, which was the point of the hint.
 type LoxClass struct {
-	name         string
+	name string
+	// superclass is nil for a root class. Inheritance is one pointer and two
+	// fall-throughs below: a subclass copies nothing, so a method added to a
+	// superclass at declaration time is found by subclasses already built.
+	superclass   *LoxClass
 	methods      map[string]*LoxFunction
 	classMethods map[string]*LoxFunction
 	fields       map[string]any
@@ -29,25 +33,49 @@ type LoxClass struct {
 
 var _ Callable = (*LoxClass)(nil)
 
-func newLoxClass(name string, methods, classMethods map[string]*LoxFunction) *LoxClass {
+func newLoxClass(name string, superclass *LoxClass, methods, classMethods map[string]*LoxFunction) *LoxClass {
 	return &LoxClass{
 		name:         name,
+		superclass:   superclass,
 		methods:      methods,
 		classMethods: classMethods,
 		fields:       make(map[string]any),
 	}
 }
 
-// findMethod returns nil rather than an error: the caller decides whether a
-// missing method is a missing property or just a class without an initializer.
+// findMethod walks up the chain and returns nil rather than an error: the
+// caller decides whether a missing method is a missing property or just a class
+// without an initializer.
+//
+// Own methods are checked first, which is the whole of overriding — and because
+// `init` is found this way too, a subclass that declares none inherits its
+// superclass's constructor, arity included.
 func (c *LoxClass) findMethod(name string) *LoxFunction {
-	return c.methods[name]
+	if method, ok := c.methods[name]; ok {
+		return method
+	}
+	if c.superclass != nil {
+		return c.superclass.findMethod(name)
+	}
+	return nil
 }
 
-// findClassMethod is the same lookup over the other map. Keeping the two apart
-// is what makes `C.instanceMethod` an error rather than an unbound function.
+// findClassMethod is the same walk over the other map. Keeping the two apart is
+// what makes `C.instanceMethod` an error rather than an unbound function;
+// walking both is what makes a class method inherited like any other.
+//
+// Static *fields* are deliberately not inherited: they live in c.fields, which
+// this does not touch. A class's fields are its own for the same reason an
+// instance's are — inheriting a mutable slot would give two classes one
+// variable.
 func (c *LoxClass) findClassMethod(name string) *LoxFunction {
-	return c.classMethods[name]
+	if method, ok := c.classMethods[name]; ok {
+		return method
+	}
+	if c.superclass != nil {
+		return c.superclass.findClassMethod(name)
+	}
+	return nil
 }
 
 // get and set make the class itself a property owner. A class method binds

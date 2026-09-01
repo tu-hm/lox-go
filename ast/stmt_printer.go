@@ -46,9 +46,15 @@ func (p *StmtPrinter) VisitBlockStmt(stmt *Block) any {
 // VisitClassStmt renders each method through VisitFunctionStmt, so a method and
 // a plain function print identically. That is honest: at this point in the book
 // they differ only in where the runtime stores them.
+//
+// A superclass keeps its source spelling, "< Name". Rendering it as a bare word
+// after the class name would put it where a reader expects a method.
 func (p *StmtPrinter) VisitClassStmt(stmt *Class) any {
-	parts := make([]string, 0, len(stmt.Methods)+len(stmt.ClassMethods)+2)
+	parts := make([]string, 0, len(stmt.Methods)+len(stmt.ClassMethods)+4)
 	parts = append(parts, "class", stmt.Name.Lexeme)
+	if stmt.Superclass != nil {
+		parts = append(parts, "<", stmt.Superclass.Name.Lexeme)
+	}
 	for _, method := range stmt.Methods {
 		parts = append(parts, p.VisitFunctionStmt(method).(string))
 	}

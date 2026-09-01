@@ -191,6 +191,57 @@ func (i *Interpreter) VisitSetExpr(e *ast.Set) any {
 	return value
 }
 
+// VisitSuperExpr looks the method up on the superclass and binds it to the
+// current receiver — not to the superclass. That is what makes `super.method()`
+// a call on this object that starts its search one class higher, rather than a
+// call on some other object.
+//
+// Both operands are read by slot. `super` sits where the resolver put it, and
+// the receiver one hop nearer: the `this` scope is nested directly inside the
+// `super` scope and holds exactly one binding, so distance-1, index 0 is it
+// from anywhere the two are visible at all.
+//
+// Fields are not consulted. `super.x` names a method by construction — an
+// instance's fields belong to the instance, not to a class in its chain — which
+// is why this does not go through lookUpProperty.
+func (i *Interpreter) VisitSuperExpr(e *ast.Super) any {
+	at, resolved := i.locals[e]
+	if !resolved {
+		// Unreachable from a script: the resolver refuses `super` outside a
+		// subclass before anything runs. A bare REPL line skips resolution
+		// altogether, though, so this is the one way an unresolved `super`
+		// reaches the interpreter — and reading slot 0 of the globals, which
+		// have no slots, would take the process down. Report it the way an
+		// unresolved `this` already reports itself.
+		i.failWith(undefinedVariable(e.Keyword))
+	}
+	superclass := i.environment.GetAt(at.distance, at.index).(*LoxClass)
+	receiver := i.environment.GetAt(at.distance-1, 0)
+
+	// Which half of the class the search uses follows the receiver, which is
+	// what `this` already means here: an instance in a method, the class itself
+	// in a class method. So `super` inside a class method reaches the
+	// superclass's class methods, and nothing else has to know the difference.
+	find := superclass.findMethod
+	if _, onTheClass := receiver.(*LoxClass); onTheClass {
+		find = superclass.findClassMethod
+	}
+
+	method := find(e.Method.Lexeme)
+	if method == nil {
+		i.fail(e.Method, "Undefined property '"+e.Method.Lexeme+"'.")
+	}
+
+	bound := method.bind(receiver)
+	if method.declaration.IsGetter {
+		// A getter reached through `super` still runs on access. Handing back
+		// the function instead would make `super.area` and `this.area` two
+		// different kinds of expression.
+		return bound.Call(i, nil)
+	}
+	return bound
+}
+
 // VisitThisExpr reads `this` exactly like any other variable, because by the
 // time execution starts it is one: LoxFunction.bind put it in a scope and the
 // resolver recorded where.
@@ -341,24 +392,53 @@ func (i *Interpreter) VisitBlockStmt(stmt *ast.Block) any {
 // matches by name and a local environment holds no names, so it would walk past
 // this scope and fail in the globals. One Define is correct here and keeps the
 // resolver's slot numbering, because a class declaration performs exactly one
-// Define in its scope. Chapter 13's superclass scope will revisit this.
+// Define in its scope.
+//
+// A superclass adds one environment between that scope and the methods, holding
+// `super` alone — the runtime half of the scope resolver.VisitClassStmt opens.
+// It is built as a local variable rather than by swapping i.environment, so the
+// single Define of the class name still lands in the enclosing scope, in the
+// slot the resolver numbered for it.
 func (i *Interpreter) VisitClassStmt(stmt *ast.Class) any {
+	var superclass *LoxClass
+	if stmt.Superclass != nil {
+		// The check is here and not in the resolver because the superclass is
+		// an expression: the text only says which variable to read, and what it
+		// holds is not known until this line runs.
+		value := i.evaluate(stmt.Superclass)
+		found, ok := value.(*LoxClass)
+		if !ok {
+			i.fail(stmt.Superclass.Name, "Superclass must be a class.")
+		}
+		superclass = found
+	}
+
+	// Methods close over the `super` environment when there is one, so the
+	// distance a method body counts to `super` is fixed at declaration time —
+	// like every other captured variable, and unlike the receiver, which is not
+	// known until the method is found.
+	methodEnvironment := i.environment
+	if superclass != nil {
+		methodEnvironment = NewEnvironment(i.environment)
+		methodEnvironment.Define("super", superclass)
+	}
+
 	methods := make(map[string]*LoxFunction, len(stmt.Methods))
 	for _, method := range stmt.Methods {
 		// "init" is a name, not a keyword. Nothing stops a program from
 		// declaring it, and nothing should: that is how you get a constructor.
 		isInitializer := method.Name.Lexeme == "init"
-		methods[method.Name.Lexeme] = newLoxFunction(method, i.environment, isInitializer)
+		methods[method.Name.Lexeme] = newLoxFunction(method, methodEnvironment, isInitializer)
 	}
 
 	// A class method named init is not a constructor — construction is a thing
 	// that happens to instances, and a class method never receives one.
 	classMethods := make(map[string]*LoxFunction, len(stmt.ClassMethods))
 	for _, method := range stmt.ClassMethods {
-		classMethods[method.Name.Lexeme] = newLoxFunction(method, i.environment, false)
+		classMethods[method.Name.Lexeme] = newLoxFunction(method, methodEnvironment, false)
 	}
 
-	i.environment.Define(stmt.Name.Lexeme, newLoxClass(stmt.Name.Lexeme, methods, classMethods))
+	i.environment.Define(stmt.Name.Lexeme, newLoxClass(stmt.Name.Lexeme, superclass, methods, classMethods))
 	return nil
 }
 

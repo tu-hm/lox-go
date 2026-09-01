@@ -222,6 +222,21 @@ func TestPrinterRendersClassNodes(t *testing.T) {
 			},
 			want: "(.= this total (+ (. this total) 1))",
 		},
+		{
+			// A superclass lookup has no object subexpression, so it does not
+			// borrow the "(. ...)" form: there is nothing to put in the slot.
+			name: "super",
+			expr: &ast.Super{Keyword: op(token.SUPER, "super"), Method: op(token.IDENTIFIER, "cook")},
+			want: "(super cook)",
+		},
+		{
+			name: "a property read on what super found",
+			expr: &ast.Get{
+				Object: &ast.Super{Keyword: op(token.SUPER, "super"), Method: op(token.IDENTIFIER, "a")},
+				Name:   op(token.IDENTIFIER, "b"),
+			},
+			want: "(. (super a) b)",
+		},
 	}
 
 	for _, tt := range tests {
@@ -264,6 +279,15 @@ func TestStmtPrinterRendersAClass(t *testing.T) {
 
 	got := ast.NewStmtPrinter(&ast.Printer{}).Print(class)
 	want := "(class Point (fun init (x) (block (expr (.= this x x)))) (fun get () (block (return (. this x)))))"
+	if got != want {
+		t.Errorf("Print() = %q, want %q", got, want)
+	}
+
+	// A superclass keeps its source spelling, so it cannot be mistaken for a
+	// method in the rendered list.
+	class.Superclass = &ast.Variable{Name: op(token.IDENTIFIER, "Origin")}
+	got = ast.NewStmtPrinter(&ast.Printer{}).Print(class)
+	want = "(class Point < Origin (fun init (x) (block (expr (.= this x x)))) (fun get () (block (return (. this x)))))"
 	if got != want {
 		t.Errorf("Print() = %q, want %q", got, want)
 	}

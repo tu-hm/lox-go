@@ -893,6 +893,30 @@ func TestClassRuntimeErrors(t *testing.T) {
 			source:  `class C {} var c = C(); c.field = 1; c.field();`,
 			message: "Can only call functions and classes.",
 		},
+		{
+			// The superclass clause is an expression, so what it holds is not
+			// known until the declaration runs. The resolver cannot catch this.
+			name:    "inheriting from something that is not a class",
+			source:  `var notAClass = 1; class C < notAClass {}`,
+			message: "Superclass must be a class.",
+		},
+		{
+			name:    "inheriting from a value that is nil",
+			source:  `var notAClass; class C < notAClass {}`,
+			message: "Superclass must be a class.",
+		},
+		{
+			name:    "super naming a method no class in the chain declares",
+			source:  `class A {} class B < A { m() { return super.nope(); } } B().m();`,
+			message: "Undefined property 'nope'.",
+		},
+		{
+			// Methods are inherited; static fields are not. A class's fields
+			// are its own, the way an instance's are.
+			name:    "a static field is not inherited",
+			source:  `class A {} class B < A {} A.tag = 1; print B.tag;`,
+			message: "Undefined property 'tag'.",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1094,5 +1118,209 @@ func TestGetterErrorsPropagate(t *testing.T) {
 	}
 	if want := "Operands must be two numbers or two strings."; runtimeErr.Message != want {
 		t.Errorf("message = %q, want %q", runtimeErr.Message, want)
+	}
+}
+
+// TestInheritedMethodsAndSuper is chapter 13's core: a subclass finds what it
+// did not declare, an override wins over what it did, and `super` reaches past
+// the override without leaving the receiver behind.
+func TestInheritedMethodsAndSuper(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		class Doughnut {
+			cook() { return "Fry until golden brown."; }
+			describe() { return "A doughnut: " + this.cook(); }
+		}
+
+		// A subclass that declares nothing still has everything.
+		class BostonCream < Doughnut {}
+		print BostonCream();
+		print BostonCream().cook();
+		// this.cook() inside the inherited describe() finds the receiver's
+		// class first, which is what makes inheritance dynamic dispatch and
+		// not a copy of the superclass's body.
+		print BostonCream().describe();
+
+		class Cruller < Doughnut {
+			cook() { return super.cook() + " Then dip in icing."; }
+		}
+		print Cruller().cook();
+		print Cruller().describe();
+
+		// An initializer is found by the same walk, so a subclass that
+		// declares none inherits the superclass's -- arity included.
+		class Base {
+			init(name) { this.name = name; }
+			describe() { return "base " + this.name; }
+		}
+		class Plain < Base {}
+		print Plain("plain").describe();
+
+		// And a subclass that declares one can chain to it.
+		class Extra < Base {
+			init(name, extra) {
+				super.init(name);
+				this.extra = extra;
+			}
+			describe() { return super.describe() + " + " + this.extra; }
+		}
+		print Extra("a", "b").describe();
+
+		// A getter is a method, so it inherits like one -- and super.area runs
+		// the superclass getter rather than handing back the function.
+		class Shape {
+			init(size) { this.size = size; }
+			area { return this.size * this.size; }
+		}
+		class Padded < Shape {
+			area { return super.area + 1; }
+		}
+		print Shape(3).area;
+		print Padded(3).area;
+
+		// Class methods are inherited too, and this inside one is the class
+		// the lookup started from, not the class that declared the method.
+		class Registry {
+			class label() { return "registry"; }
+			class describe() { return "a " + this.label(); }
+		}
+		class Sub < Registry {}
+		print Sub.label();
+		print Sub.describe();
+
+		class Named < Registry {
+			class label() { return "named " + super.label(); }
+		}
+		print Named.label();
+		print Named.describe();
+	`)
+
+	if err := execute(t, interp, program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	want := "BostonCream instance\n" +
+		"Fry until golden brown.\n" +
+		"A doughnut: Fry until golden brown.\n" +
+		"Fry until golden brown. Then dip in icing.\n" +
+		"A doughnut: Fry until golden brown. Then dip in icing.\n" +
+		"base plain\n" +
+		"base a + b\n" +
+		"9\n" +
+		"10\n" +
+		"registry\n" +
+		"a registry\n" +
+		"named registry\n" +
+		"a named registry\n"
+	if got := out.String(); got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+// TestSuperIsFixedAtDeclarationNotAtCall is the program the chapter builds the
+// whole `super` environment for. `super` means the superclass of the class the
+// method was *written* in; reading it from the receiver's class instead makes
+// the call below loop forever.
+func TestSuperIsFixedAtDeclarationNotAtCall(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		class A { method() { return "A"; } }
+		class B < A {
+			method() { return "B"; }
+			test() { return super.method(); }
+		}
+		class C < B {}
+
+		// test() was declared in B, so its super is A -- even though the
+		// receiver is a C, whose superclass is B.
+		print C().test();
+		// The receiver still decides ordinary dispatch: B's override wins.
+		print C().method();
+	`)
+
+	if err := execute(t, interp, program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got, want := out.String(), "A\nB\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+// TestSuperResolvesThroughNestedScopes: `super` is an ordinary captured
+// variable, so a closure inside a method finds it however deep it sits. Its
+// distance is counted from the text by the resolver, which is the only thing
+// that keeps the slot arithmetic honest.
+func TestSuperResolvesThroughNestedScopes(t *testing.T) {
+	var out bytes.Buffer
+	interp := interpreter.NewWithWriter(&out)
+	program := parseProgram(t, `
+		class A { greet() { return "A"; } }
+		class B < A {
+			greet() { return "B"; }
+			makeGreeter() {
+				var prefix = "from ";
+				fun greeter() {
+					return prefix + super.greet() + this.greet();
+				}
+				return greeter;
+			}
+		}
+		print B().makeGreeter()();
+
+		// A class declared inside a method is a local like any other, and its
+		// own super scope nests inside the enclosing one.
+		class Outer < A {
+			build() {
+				class Inner < A {
+					greet() { return "inner+" + super.greet(); }
+				}
+				return Inner().greet() + "/" + super.greet();
+			}
+		}
+		print Outer().build();
+	`)
+
+	if err := execute(t, interp, program); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if got, want := out.String(), "from AB\ninner+A/A\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+// TestParserFrontEndsExecuteInheritanceEqually: the superclass clause is read
+// by each front end's own orchestration layer and `super` by the LL(k) table,
+// so the two paths have to be pinned against each other.
+func TestParserFrontEndsExecuteInheritanceEqually(t *testing.T) {
+	const source = `
+		class Greeter {
+			init(name) { this.name = name; }
+			greet() { return "hello " + this.name; }
+		}
+		class Loud < Greeter {
+			greet() { return super.greet() + "!"; }
+		}
+		print Loud("world").greet();
+	`
+
+	var outputs []string
+	for _, kind := range []parser.Kind{parser.RecursiveDescent, parser.LLK} {
+		frontEnd, err := parser.NewOf(parser.Config{Kind: kind}, lexer.Lex(source))
+		if err != nil {
+			t.Fatalf("NewOf(%s): %v", kind, err)
+		}
+		program, errs := frontEnd.ParseProgram()
+		if len(errs) != 0 {
+			t.Fatalf("%s ParseProgram: %v", kind, errs)
+		}
+		var out bytes.Buffer
+		if err := execute(t, interpreter.NewWithWriter(&out), program); err != nil {
+			t.Fatalf("%s Execute: %v", kind, err)
+		}
+		outputs = append(outputs, out.String())
+	}
+	if outputs[0] != "hello world!\n" || outputs[1] != outputs[0] {
+		t.Errorf("recursive descent = %q, LL(k) = %q, want %q", outputs[0], outputs[1], "hello world!\n")
 	}
 }

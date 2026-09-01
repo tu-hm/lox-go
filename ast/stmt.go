@@ -38,8 +38,13 @@ func (e *Block) isStmt()                  {}
 // itself carries ClassMethods — the ones declared with a leading `class`.
 // Both are *Function rather than Stmt because every consumer wants the
 // concrete node: a method is never executed as a statement.
+//
+// Superclass is nil for a root class. It is *Variable and not Expr because
+// the grammar allows nothing else there: a superclass is named, never
+// computed, and both the resolver and the runtime want the name.
 type Class struct {
 	Name         token.Token
+	Superclass   *Variable
 	Methods      []*Function
 	ClassMethods []*Function
 }

@@ -160,6 +160,14 @@ func TestRPNPrinterRendersClassNodes(t *testing.T) {
 			"this plain flavor .=",
 		},
 		{
+			// `super` stands where the object would. Nothing else can appear
+			// there: it is a keyword, so it is never an object expression on
+			// its own and never a property name either.
+			"super",
+			&ast.Super{Keyword: op(token.SUPER, "super"), Method: op(token.IDENTIFIER, "cook")},
+			"super cook .",
+		},
+		{
 			"property write whose value is itself a read",
 			&ast.Set{
 				Object: this,

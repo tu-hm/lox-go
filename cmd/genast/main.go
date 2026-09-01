@@ -115,6 +115,14 @@ var exprs = hierarchy{
 			},
 		},
 		{
+			Name: "Super",
+			Doc:  "Super reads Method from the superclass of the class the enclosing method\nwas declared in, bound to the current receiver. Keyword is the name the\nresolver binds; Method, like any property name, is resolved by nobody.",
+			Fields: []field{
+				{"Keyword", "token.Token"},
+				{"Method", "token.Token"},
+			},
+		},
+		{
 			Name:   "This",
 			Doc:    "This reads the receiver of the enclosing method. Keyword locates the\n\"outside of a class\" error, and is also the name the resolver binds.",
 			Fields: []field{{"Keyword", "token.Token"}},
@@ -146,9 +154,10 @@ var stmts = hierarchy{
 		},
 		{
 			Name: "Class",
-			Doc:  "Class binds Name to a class whose instances carry Methods and which\nitself carries ClassMethods — the ones declared with a leading `class`.\nBoth are *Function rather than Stmt because every consumer wants the\nconcrete node: a method is never executed as a statement.",
+			Doc:  "Class binds Name to a class whose instances carry Methods and which\nitself carries ClassMethods — the ones declared with a leading `class`.\nBoth are *Function rather than Stmt because every consumer wants the\nconcrete node: a method is never executed as a statement.\n\nSuperclass is nil for a root class. It is *Variable and not Expr because\nthe grammar allows nothing else there: a superclass is named, never\ncomputed, and both the resolver and the runtime want the name.",
 			Fields: []field{
 				{"Name", "token.Token"},
+				{"Superclass", "*Variable"},
 				{"Methods", "[]*Function"},
 				{"ClassMethods", "[]*Function"},
 			},

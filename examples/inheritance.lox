@@ -1,0 +1,102 @@
+// Chapter 13 — inheritance.
+//
+// Two features that look like one: a subclass gets its superclass's methods for
+// free, and `super` lets an override reach the method it replaced. The second
+// is the harder one, and the reason is worth holding onto — `super` cannot mean
+// "the superclass of whatever object this is", or an override that calls
+// `super` would call itself forever.
+
+class Doughnut {
+  init(topping) {
+    this.topping = topping;
+  }
+
+  cook() {
+    print "Fry until golden brown.";
+  }
+
+  serve() {
+    print "Enjoy your " + this.topping + " doughnut.";
+  }
+}
+
+// A subclass inherits every method it does not declare, including init(). It
+// declares none here, so Doughnut's constructor is what runs — arity and all.
+class Cruller < Doughnut {}
+
+var cruller = Cruller("glazed");
+cruller.cook();               // Fry until golden brown.
+cruller.serve();              // Enjoy your glazed doughnut.
+print cruller;                // Cruller instance — the subclass, not Doughnut
+
+// An override replaces the method for every caller, including callers that only
+// know about the superclass.
+class BostonCream < Doughnut {
+  init() {
+    // A subclass initializer must set up the superclass's state itself. There
+    // is no implicit call: Lox says what it does.
+    super.init("Boston cream");
+    this.filled = true;
+  }
+
+  cook() {
+    // `super` starts the lookup one class up, but binds the method to *this*
+    // object — so the inherited cook() still sees this instance.
+    super.cook();
+    print "Pipe full of custard and coat with chocolate.";
+  }
+}
+
+var boston = BostonCream();
+boston.cook();
+boston.serve();               // Enjoy your Boston cream doughnut.
+print boston.filled;          // true
+
+// Inheritance is a chain, not a pair, and `super` climbs exactly one link from
+// where the method was *written* — not from the object's class. That is what
+// keeps the middle method from calling itself forever.
+class A {
+  speak() { return "A"; }
+}
+class B < A {
+  speak() { return "B then " + super.speak(); }
+}
+class C < B {
+  speak() { return "C then " + super.speak(); }
+}
+print C().speak();            // C then B then A
+
+// The chain is followed at call time, not copied at declaration time: a method
+// added to a superclass is found by subclasses that already exist.
+print A().speak();            // A
+
+// Getters and class methods inherit too, and `super` reaches both. Inside a
+// class method `this` is the class, so `super` finds the superclass's class
+// methods — the same rule, applied to the other half of the class.
+class Shape {
+  class describe() { return "a shape"; }
+  sides { return 0; }
+}
+class Square < Shape {
+  class describe() { return "a square, which is " + super.describe(); }
+  sides { return 4 + super.sides; }
+}
+print Square.describe();      // a square, which is a shape
+print Square().sides;         // 4
+
+// Static *fields* are not inherited: they live on the class object, and sharing
+// one mutable slot between two classes would be a different feature.
+Shape.tag = "shape";
+print Shape.tag;              // shape
+
+// Each of these is refused before the program runs. Uncomment one to see it:
+//
+//   class C < C {}                          A class can't inherit from itself.
+//   print super.method;                     Can't use 'super' outside of a class.
+//   class C { m() { return super.m(); } }   Can't use 'super' in a class with no superclass.
+//
+// And these are runtime errors, because what a name holds is not something the
+// text can decide:
+//
+//   var NotAClass = 1; class C < NotAClass {}   Superclass must be a class.
+//   class A {} class B < A {} B().nope;         Undefined property 'nope'.

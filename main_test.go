@@ -52,10 +52,17 @@ func TestBareExpressionDetectionIsReplOnlySyntaxChoice(t *testing.T) {
 		// only thing that keeps a REPL line from being read as an expression.
 		"class C {}":         false,
 		"class C { m() {} }": false,
+		// A superclass clause does not change the answer: the leading keyword
+		// is still what settles it.
+		"class C < B {}": false,
 		// `this` is an expression, even though it will not resolve at the REPL.
-		"this":         true,
-		"this.field":   true,
-		"egg.scramble": true,
+		// So is `super.m()`, for the same reason: whether it resolves is a
+		// later question than whether the line is an expression.
+		"this":           true,
+		"this.field":     true,
+		"super.method":   true,
+		"super.method()": true,
+		"egg.scramble":   true,
 	} {
 		if got := isBareExpression(lexer.Lex(source)); got != want {
 			t.Errorf("isBareExpression(%q) = %t, want %t", source, got, want)
@@ -150,5 +157,28 @@ func TestBareThisAtTheReplIsARuntimeError(t *testing.T) {
 	}
 	if !errors.HadRuntimeError {
 		t.Error("bare `this` did not report a runtime error")
+	}
+}
+
+// TestBareSuperAtTheReplIsARuntimeError is the sibling of the `this` case, and
+// it is the only way an unresolved `super` can reach the interpreter at all: a
+// script is refused by the resolver, but a bare REPL line skips resolution
+// because an expression declares nothing. Before the guard in VisitSuperExpr
+// this read slot 0 of the globals, which have no slots, and panicked.
+func TestBareSuperAtTheReplIsARuntimeError(t *testing.T) {
+	defer errors.Reset()
+
+	for _, line := range []string{"super.method", "super.method()"} {
+		errors.Reset()
+		var out bytes.Buffer
+		interp := interpreter.NewWithWriter(&out)
+		runSource(line, options{}, interp, true)
+
+		if got := out.String(); got != "" {
+			t.Errorf("%q printed %q, want nothing", line, got)
+		}
+		if !errors.HadRuntimeError {
+			t.Errorf("%q did not report a runtime error", line)
+		}
 	}
 }

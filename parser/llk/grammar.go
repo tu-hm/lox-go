@@ -297,6 +297,16 @@ func loxGrammar() *grammar {
 	g.add("primary", term(token.NUMBER, ""), act(mkLiteral))
 	g.add("primary", term(token.STRING, ""), act(mkLiteral))
 	g.add("primary", term(token.THIS, ""), act(mkThis))
+	// `super` is the one primary that is not a single terminal: the '.' and the
+	// method name are part of the expression rather than a callTail suffix, so
+	// `super` alone can never reach the tail and be read as a value.
+	// Prediction stays LL(1) — no other primary production starts with SUPER.
+	g.add("primary",
+		term(token.SUPER, ""),
+		term(token.DOT, "Expect '.' after 'super'."),
+		term(token.IDENTIFIER, "Expect superclass method name."),
+		act(mkSuper),
+	)
 	g.add("primary", term(token.IDENTIFIER, ""), act(mkVariable))
 	g.add("primary",
 		term(token.LEFT_PAREN, ""),
@@ -493,6 +503,16 @@ func mkGet(s *stack) error {
 
 func mkThis(s *stack) error {
 	s.push(&ast.This{Keyword: s.token()})
+	return nil
+}
+
+// mkSuper pops in reverse of the body order: the method name, the '.', then
+// the keyword.
+func mkSuper(s *stack) error {
+	method := s.token()
+	s.token() // '.'
+	keyword := s.token()
+	s.push(&ast.Super{Keyword: keyword, Method: method})
 	return nil
 }
 

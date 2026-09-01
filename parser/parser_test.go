@@ -564,6 +564,13 @@ func TestClassAndPropertyParseErrors(t *testing.T) {
 		"class C { m() return; }": "Expect '{' before method body.",
 		"egg.;":                   "Expect property name after '.'.",
 		"egg.3;":                  "Expect property name after '.'.",
+		// The superclass clause names a class and nothing else, so the failure
+		// lands on the '(' rather than parsing a call and rejecting it later.
+		"class C < {}":                       "Expect superclass name.",
+		"class C < f() {}":                   "Expect '{' before class body.",
+		"class C < B { m() { super; } }":     "Expect '.' after 'super'.",
+		"class C < B { m() { super.; } }":    "Expect superclass method name.",
+		"class C < B { m() { super.1(); } }": "Expect superclass method name.",
 		// The target is a call, not a property or a variable, so there is
 		// nothing to assign to.
 		"egg.scramble() = 1;": "Invalid assignment target.",
@@ -658,5 +665,67 @@ func TestParseGetters(t *testing.T) {
 		t.Error("fun f { } parsed as a getter, want an error")
 	} else if parseErr, ok := errs[0].(*ParseError); !ok || parseErr.Message != "Expect '(' after function name." {
 		t.Errorf("error = %v, want \"Expect '(' after function name.\"", errs[0])
+	}
+}
+
+// TestParseInheritance covers the superclass clause and `super`. Both are
+// syntax the tree has to carry: the superclass as an ordinary variable use,
+// and `super.name` as one node rather than a property access on a value.
+func TestParseInheritance(t *testing.T) {
+	defer errors.Reset()
+
+	statements, errs := parserFor(t, "class Muffin < Bread { serve() { return super.serve(); } }").ParseProgram()
+	if len(errs) != 0 {
+		t.Fatalf("ParseProgram: %v", errs)
+	}
+
+	class, ok := statements[0].(*ast.Class)
+	if !ok {
+		t.Fatalf("statement = %T, want *ast.Class", statements[0])
+	}
+	if class.Superclass == nil || class.Superclass.Name.Lexeme != "Bread" {
+		t.Fatalf("Superclass = %v, want Bread", class.Superclass)
+	}
+
+	want := "(class Muffin < Bread (fun serve () (block (return (call (super serve))))))"
+	if got := renderStatements(statements); got[0] != want {
+		t.Errorf("render =\n  %s\nwant\n  %s", got[0], want)
+	}
+
+	// No clause leaves the field nil rather than an empty Variable, because
+	// every consumer asks "is there a superclass" before it asks which.
+	statements, errs = parserFor(t, "class Bread {}").ParseProgram()
+	if len(errs) != 0 {
+		t.Fatalf("ParseProgram: %v", errs)
+	}
+	if super := statements[0].(*ast.Class).Superclass; super != nil {
+		t.Errorf("Superclass = %v, want nil", super)
+	}
+}
+
+// TestSuperIsAPrimaryNotAProperty pins where `super` sits in the precedence
+// ladder: it is a primary, so the call and property suffixes apply to the
+// bound method exactly as they would to any other expression.
+func TestSuperIsAPrimaryNotAProperty(t *testing.T) {
+	defer errors.Reset()
+
+	for source, want := range map[string]string{
+		"super.method":       "(super method)",
+		"super.method()":     "(call (super method))",
+		"super.method(1, 2)": "(call (super method) 1 2)",
+		// The Get applies to what super.a evaluated to. Nothing chains a second
+		// superclass lookup, because `super` appears once, at the front.
+		"super.a.b": "(. (super a) b)",
+		// A method found through super is a value like any other, so it takes
+		// the assignment tail's l-value check the same way.
+		"super.a.b = 1": "(.= (super a) b 1)",
+	} {
+		expr, err := parserFor(t, source).Parse()
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", source, err)
+		}
+		if got := (&ast.Printer{}).Print(expr); got != want {
+			t.Errorf("Parse(%q) = %s, want %s", source, got, want)
+		}
 	}
 }

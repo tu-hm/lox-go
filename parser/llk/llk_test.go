@@ -56,7 +56,8 @@ func TestFirstSet(t *testing.T) {
 
 	want := []token.TokenType{
 		token.NUMBER, token.STRING, token.TRUE, token.FALSE, token.NIL,
-		token.THIS, token.IDENTIFIER, token.LEFT_PAREN, token.MINUS, token.BANG,
+		token.THIS, token.SUPER, token.IDENTIFIER, token.LEFT_PAREN, token.MINUS,
+		token.BANG,
 	}
 	for _, tt := range want {
 		if !s.first[nExpression].has(seq{tt}) {
@@ -774,6 +775,44 @@ func TestClassesAndPropertiesForEveryK(t *testing.T) {
 	}
 }
 
+// TestInheritanceForEveryK: the superclass clause is read by the orchestration
+// layer, `super` by the table. Both have to produce the same tree the
+// recursive-descent parser does, at every supported lookahead — `super.a` is
+// three terminals in one production, so no window can split it.
+func TestInheritanceForEveryK(t *testing.T) {
+	defer errors.Reset()
+
+	for k := MinK; k <= MaxK; k++ {
+		for source, want := range map[string]string{
+			"super.method":       "(super method)",
+			"super.method()":     "(call (super method))",
+			"super.method(1, 2)": "(call (super method) 1 2)",
+			"super.a.b":          "(. (super a) b)",
+		} {
+			expr, err := parserFor(t, source, k).Parse()
+			if err != nil {
+				t.Fatalf("k=%d Parse(%q): %v", k, source, err)
+			}
+			if got := (&ast.Printer{}).Print(expr); got != want {
+				t.Errorf("k=%d Parse(%q) = %s, want %s", k, source, got, want)
+			}
+		}
+
+		statements, errs := parserFor(t, `
+			class Muffin < Bread {
+				serve(who) { return super.serve(who); }
+			}
+		`, k).ParseProgram()
+		if len(errs) != 0 {
+			t.Fatalf("k=%d ParseProgram: %v", k, errs)
+		}
+		want := "(class Muffin < Bread (fun serve (who) (block (return (call (super serve) who)))))"
+		if got := renderProgram(statements); len(got) != 1 || got[0] != want {
+			t.Errorf("k=%d ParseProgram = %v, want [%s]", k, got, want)
+		}
+	}
+}
+
 func TestClassAndPropertyErrorsForEveryK(t *testing.T) {
 	defer errors.Reset()
 
@@ -786,6 +825,8 @@ func TestClassAndPropertyErrorsForEveryK(t *testing.T) {
 			"class C":             "Expect '{' before class body.",
 			"class C {":           "Expect '}' after class body.",
 			"class C { method }":  "Expect '(' after method name.",
+			"class C < {}":        "Expect superclass name.",
+			"class C < f() {}":    "Expect '{' before class body.",
 			"egg.scramble() = 1;": "Invalid assignment target.",
 		} {
 			_, errs := parserFor(t, source, k).ParseProgram()
@@ -816,7 +857,7 @@ func TestErrorMessagesDoNotDependOnK(t *testing.T) {
 	defer errors.Reset()
 
 	sources := []string{
-		"egg.;", "egg.3;", "a.b.;", "a.b.c.;", "this.;",
+		"egg.;", "egg.3;", "a.b.;", "a.b.c.;", "this.;", "super.;",
 		"print a.;", "var x = a.;", "{ a.; }", "f(a.);", "a.b = ;",
 		"1 +", "1 2", "(1 + 2", "var a", "return", "print;",
 		"class C { m }", "if true) 1;", "a = ;", "(a) = 1;",
@@ -854,7 +895,7 @@ func TestRecoverStillRejectsBadPrograms(t *testing.T) {
 	defer errors.Reset()
 
 	for _, src := range []string{
-		"egg.;", "egg.3;", "a.b.;", "this.;",
+		"egg.;", "egg.3;", "a.b.;", "this.;", "super.;", "super;",
 		"a.b = ;", "f(a.);", "var x = a.;", "class C { m }", "class C { class }",
 		"1 +", "1 2", "(1 + 2", "*", ")", "a = ;", "(a) = 1;", "var a", "return",
 		"fun f {}", "class C", "if true) 1;", "while (1 2;", "for (;;",

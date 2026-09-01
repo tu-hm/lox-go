@@ -102,11 +102,25 @@ func (p *Parser) declaration() (ast.Stmt, error) {
 // A leading `class` makes the method a class method — one reached through the
 // class rather than through an instance. Reusing the keyword costs nothing:
 // `class` cannot start a method name, so one token of lookahead settles it.
+//
+// `< IDENTIFIER` names the superclass. It is parsed straight into a Variable
+// rather than through expression(): the grammar allows a name and nothing else
+// there, so `class A < f() {}` should fail at the `(`, not evaluate a call.
 func (p *Parser) classDeclaration() (ast.Stmt, error) {
 	name, err := p.consume(token.IDENTIFIER, "Expect class name.")
 	if err != nil {
 		return nil, err
 	}
+
+	var superclass *ast.Variable
+	if p.match(token.LESS) {
+		superName, err := p.consume(token.IDENTIFIER, "Expect superclass name.")
+		if err != nil {
+			return nil, err
+		}
+		superclass = &ast.Variable{Name: superName}
+	}
+
 	if _, err := p.consume(token.LEFT_BRACE, "Expect '{' before class body."); err != nil {
 		return nil, err
 	}
@@ -128,7 +142,7 @@ func (p *Parser) classDeclaration() (ast.Stmt, error) {
 	if _, err := p.consume(token.RIGHT_BRACE, "Expect '}' after class body."); err != nil {
 		return nil, err
 	}
-	return &ast.Class{Name: name, Methods: methods, ClassMethods: classMethods}, nil
+	return &ast.Class{Name: name, Superclass: superclass, Methods: methods, ClassMethods: classMethods}, nil
 }
 
 func (p *Parser) function(kind string) (*ast.Function, error) {
@@ -676,6 +690,19 @@ func (p *Parser) primary() (ast.Expr, error) {
 
 	case p.match(token.NUMBER, token.STRING):
 		return &ast.Literal{Value: p.previous().Literal}, nil
+	case p.match(token.SUPER):
+		keyword := p.previous()
+		// `super` is never an expression on its own: it names no value, only a
+		// place to start a method lookup. Requiring the `.` here is what makes
+		// that a parse error rather than something the resolver has to catch.
+		if _, err := p.consume(token.DOT, "Expect '.' after 'super'."); err != nil {
+			return nil, err
+		}
+		method, err := p.consume(token.IDENTIFIER, "Expect superclass method name.")
+		if err != nil {
+			return nil, err
+		}
+		return &ast.Super{Keyword: keyword, Method: method}, nil
 	case p.match(token.THIS):
 		return &ast.This{Keyword: p.previous()}, nil
 	case p.match(token.IDENTIFIER):
