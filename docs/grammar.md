@@ -1,5 +1,9 @@
 # The Lox grammar
 
+> New here? [The front end](front-end.md) is the overview — how the lexer and
+> parser fit together and what each one does. This file is the reference: the
+> grammar itself, chapter by chapter.
+
 Canonical copy of the grammar. Every chapter from here to the end of the book
 edits this file — chapter 6 rewrites the `expression` rule into a precedence
 ladder, chapter 8 adds statements, chapter 9 adds control flow, and chapter 10

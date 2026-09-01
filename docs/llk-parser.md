@@ -1,5 +1,9 @@
 # The LL(k) parser — a second algorithm over the same grammar
 
+> This is the deep dive on the second parser. For how the front end fits
+> together at all — lexer, tokens, recursive descent — start with
+> [The front end](front-end.md).
+
 The repo now has two parser front ends. They take the same tokens, build the
 same `ast.Expr` and `ast.Stmt` trees, and are checked against each other in
 `parser/algorithm_test.go`:
