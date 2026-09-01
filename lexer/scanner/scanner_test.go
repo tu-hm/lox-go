@@ -365,6 +365,55 @@ func TestScanTokensNumbersWithDanglingDots(t *testing.T) {
 	})
 }
 
+// TestScanTokensNumberTooLarge: a literal that does not fit in a float64 is
+// refused, rather than quietly becoming +Inf or — as it did before — vanishing
+// from the token stream and leaving the parser to blame the next token.
+func TestScanTokensNumberTooLarge(t *testing.T) {
+	src := strings.Repeat("9", 400) + ";"
+
+	var got []token.Token
+	stderr := captureStderr(t, func() {
+		errors.Reset()
+		got = scanner.NewScanner(src).ScanToken()
+	})
+
+	if !errors.HadError {
+		t.Error("HadError = false, want true for a literal that overflows float64")
+	}
+	if !strings.Contains(stderr, "Number literal is too large.") {
+		t.Errorf("stderr = %q, want it to mention \"Number literal is too large.\"", stderr)
+	}
+
+	// No NUMBER token, and scanning continues: the ';' after it is still
+	// scanned, the same way an unexpected character does not end the pass.
+	if types := typesOf(got); !reflect.DeepEqual(types, []token.TokenType{token.SEMICOLON, token.EOF}) {
+		t.Errorf("tokens = %v, want [SEMICOLON EOF]", types)
+	}
+
+	errors.Reset()
+}
+
+// TestScanTokensLargeNumbersThatStillFit is the other half: the check has to
+// reject only what actually overflows. 300 digits is far past any integer a
+// float64 can represent exactly, and is still a perfectly good float64.
+func TestScanTokensLargeNumbersThatStillFit(t *testing.T) {
+	for _, src := range []string{
+		strings.Repeat("1", 300),              // ~1.1e299
+		"1" + strings.Repeat("0", 308),        // 1e308, just under the ceiling
+		"0." + strings.Repeat("0", 400) + "1", // underflows to zero, which Go does not call an error
+	} {
+		errors.Reset()
+		got := scan(t, src)
+		if errors.HadError {
+			t.Errorf("scanning %.20q…: HadError = true, want a clean scan", src)
+		}
+		if types := typesOf(got); !reflect.DeepEqual(types, []token.TokenType{token.NUMBER, token.EOF}) {
+			t.Errorf("scanning %.20q…: tokens = %v, want [NUMBER EOF]", src, types)
+		}
+	}
+	errors.Reset()
+}
+
 func TestScanTokensNumberLiteralIsFloat64(t *testing.T) {
 	got := scan(t, "42")
 

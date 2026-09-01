@@ -203,32 +203,43 @@ Measured, not inferred. Reproduce with `-tokens`.
 | `.5` | `DOT`, `NUMBER(5)` | Lox has no leading-dot literals |
 | `"café"` | one `STRING`, intact | string bodies are copied as bytes, so UTF-8 passes through |
 | `var café` | **2 errors**, identifier truncated to `caf` | the scanner is byte-oriented: `IsAlpha` rejects each byte of `é` |
-| a 400-digit number | **token silently dropped** | see below |
+| a 400-digit number | error, no token | overflows `float64`; see below |
 
-The last one is a real wart. `number()` calls `strconv.ParseFloat`, and on
-`ErrRange` it returns without adding a token *and without reporting anything*.
-The parser then sees a gap and blames the wrong token:
+The last one used to be a wart worth studying. `number()` calls
+`strconv.ParseFloat`, and on failure it returned without adding a token *and
+without reporting anything*. The parser then saw a gap in the stream and blamed
+whatever came next:
 
 ```lox
 print 99999…9;        // 400 digits
-[line 1] Error at ';': Expect expression.
+[line 1] Error at ';': Expect expression.        // ← the old message
+[line 1] Error: Number literal is too large.     // ← now
 ```
 
-The program is still refused, so nothing runs wrongly — but the message points
-at the semicolon, and the actual problem is the literal. One line in
-`number()` fixes it:
+Nothing ever ran wrongly, because the program was refused either way. But the
+message pointed at the semicolon when the problem was the literal, which is the
+kind of error that costs an afternoon. Reporting also means `main.go`'s
+`errors.HadError` check fires *before* parsing, so the misleading second message
+is gone rather than merely outranked.
 
-```go
-if err != nil {
-    errors.Error(s.line, "Number literal out of range.")
-    return
-}
-```
+Two things about that check are worth knowing:
 
-The non-ASCII identifier case is a deliberate limitation rather than a bug: Lox
-identifiers are ASCII by definition. Supporting more means decoding runes with
-`utf8.DecodeRuneInString` instead of indexing bytes, which changes `advance`,
-`peek`, and `peekNext` together.
+- **Overflow is the only reachable failure.** The text handed to `ParseFloat` is
+  digits with at most one embedded dot, so it is always syntactically valid, and
+  Go signals underflow by quietly returning zero rather than an error. A
+  400-zero decimal like `0.000…1` scans fine and is `0`.
+- **jlox disagrees.** Java's `Double.parseDouble` returns `Infinity` for an
+  overflowing literal without complaining, so the book's implementation accepts
+  it. Refusing is the better answer here: the source named a specific finite
+  number, and substituting `Infinity` is a wrong value rather than an imprecise
+  one. Lox can still *produce* an infinity at run time — `print 1/0;` gives
+  `+Inf` — which is a different thing from a literal that quietly stopped
+  meaning what it says.
+
+The non-ASCII identifier case, by contrast, is a deliberate limitation rather
+than a bug: Lox identifiers are ASCII by definition. Supporting more means
+decoding runes with `utf8.DecodeRuneInString` instead of indexing bytes, which
+changes `advance`, `peek`, and `peekNext` together.
 
 ---
 
@@ -441,8 +452,11 @@ Cheap ones, in rough order of difficulty. Predict first, then check.
    and at which stage does it fail?
 6. Add a `%` operator: token type, scanner case, grammar rung, parser function,
    interpreter case. Which of the five is the one you would forget?
-7. Fix the out-of-range number literal (see [Known edges](#known-edges)) and add
-   a scanner test for it.
+7. This repo refuses a literal too large for a `float64`; jlox accepts it and
+   gets `Infinity`, because Java's `Double.parseDouble` does not complain. Both
+   are defensible. Write the argument for jlox's side, then check whether
+   `print 1/0;` changes your mind. (The scanner test is
+   `TestScanTokensNumberTooLarge`.)
 8. Make the unterminated-string error report the line the string *opened* on
    rather than where the file ended. Verified today it says line 4 for a string
    opened on line 2.

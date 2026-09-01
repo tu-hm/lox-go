@@ -227,6 +227,7 @@ func (s *ScannerImpl) number() {
 
 	value, err := strconv.ParseFloat(s.Source[s.start:s.current], 64)
 	if err != nil {
+		errors.Error(s.line, "Number literal is too large.")
 		return
 	}
 
