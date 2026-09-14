@@ -3,14 +3,15 @@
 # Build this interpreter and run the Crafting Interpreters test suite against
 # it, on every parser configuration by default.
 #
-# The book's tests are not vendored here. They live in munificent/craftinginterpreters,
-# which this script shallow-clones into .booktest/ on first run and reuses after.
+# The tests are vendored in test/ — see test/README.md for the pinned upstream
+# commit. -u ignores them and runs a fresh clone of upstream instead, which is
+# how to find out whether the vendored copy has fallen behind.
 #
 # Usage:
 #   tool/booktest.sh                    # rd and llk at k = 1, 2, 3
 #   tool/booktest.sh -c rd              # one configuration
 #   tool/booktest.sh -f closure         # only test/closure/**
-#   tool/booktest.sh -u                 # git pull the corpus first
+#   tool/booktest.sh -u                 # against a fresh upstream clone
 #
 # Anything after -- goes to tool/booktest.py, e.g. --strict-stderr.
 
@@ -28,7 +29,7 @@ Build this interpreter and run the Crafting Interpreters test suite against it.
 
   -c CONFIG   all (default), rd, llk, llk1, llk2, llk3
   -f PREFIX   only run tests under test/PREFIX
-  -u          update the cloned corpus before running
+  -u          ignore the vendored test/ and run a fresh upstream clone
   -h          this message
 
 Anything after -- is passed to tool/booktest.py: --strict-stderr to judge our
@@ -58,11 +59,18 @@ shift $((OPTIND - 1))
 
 mkdir -p "$cache_dir"
 
-if [[ ! -d "$corpus_dir/test" ]]; then
-	echo "Cloning the book's tests into ${corpus_dir#"$repo_dir"/} ..."
-	git clone --depth 1 "$corpus_url" "$corpus_dir"
-elif [[ $update -eq 1 ]]; then
-	git -C "$corpus_dir" pull --ff-only
+# The vendored corpus sits at test/, so the repo itself is a corpus root: the
+# runner looks for <corpus>/test. -u trades it for a fresh clone of upstream.
+corpus="$repo_dir"
+if [[ $update -eq 1 || ! -d "$repo_dir/test" ]]; then
+	if [[ ! -d "$corpus_dir/.git" ]]; then
+		echo "Cloning upstream into ${corpus_dir#"$repo_dir"/} ..."
+		git clone --depth 1 "$corpus_url" "$corpus_dir"
+	else
+		git -C "$corpus_dir" pull --ff-only
+	fi
+	corpus="$corpus_dir"
+	echo "Running against upstream $(git -C "$corpus_dir" rev-parse --short HEAD), not the vendored test/."
 fi
 
 cd "$repo_dir"
@@ -89,7 +97,7 @@ status=0
 for args in "${configs[@]}"; do
 	echo "=== ${args:-default (recursive descent)} ==="
 	# shellcheck disable=SC2086 # $args is a flag list and must word-split.
-	python3 tool/booktest.py -i "$binary" -c "$corpus_dir" -f "$filter" \
+	python3 tool/booktest.py -i "$binary" -c "$corpus" -f "$filter" \
 		"$@" -- $args || status=1
 	echo
 done

@@ -19,9 +19,13 @@ Expectations are comments in the .lox source:
     // expect runtime error: <msg>    exit 70, plus a [line N] stack frame
     // nontest                        not a test at all, skip the file
 
+--corpus is a directory with a test/ subdirectory in it. The vendored corpus is
+at test/, so that is the repository root; tool/booktest.sh is the front door and
+picks it for you.
+
 Usage:
-    tool/booktest.py --interpreter ./glox --corpus .booktest/craftinginterpreters
-    tool/booktest.py -i ./glox -c <corpus> -- -parser=llk -k=2
+    tool/booktest.py --interpreter ./glox --corpus .
+    tool/booktest.py -i ./glox -c . -f closure -- -parser=llk -k=2
 """
 
 import argparse
