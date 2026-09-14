@@ -285,6 +285,7 @@ func loxGrammar() *grammar {
 	g.add(nArguments, act(emptyArguments)) // ε
 	g.add(nArgumentsTail,
 		term(token.COMMA, ""),
+		act(checkArgumentLimit),
 		nt(nExpression),
 		act(appendArgument),
 		nt(nArgumentsTail),
@@ -389,9 +390,25 @@ type action func(*stack) error
 // completed nonterminal leaves its node, and actions pop what they need. The
 // table guarantees the shape, so a pop that finds the wrong type is a grammar
 // bug, not bad input — hence the silent zero values rather than error paths.
-type stack struct{ vals []any }
+type stack struct {
+	vals []any
+	// lookahead is the next unconsumed token, refreshed before every action
+	// runs. An action that reports a diagnostic usually needs it: the value
+	// stack holds what has already been parsed, so pointing at the offending
+	// source means pointing at the token still ahead of the parser.
+	lookahead token.Token
+}
 
 func (s *stack) push(v any) { s.vals = append(s.vals, v) }
+
+// at returns the value n slots below the top without popping it, for an action
+// that has to inspect the stack mid-production rather than fold it.
+func (s *stack) at(n int) any {
+	if n < 0 || n >= len(s.vals) {
+		return nil
+	}
+	return s.vals[len(s.vals)-1-n]
+}
 
 func (s *stack) pop() any {
 	if len(s.vals) == 0 {
@@ -469,13 +486,25 @@ func startArguments(s *stack) error {
 	return nil
 }
 
+// checkArgumentLimit runs after the ',' is matched and before the argument it
+// introduces is parsed, which is the only moment the offending argument is the
+// lookahead. Doing it in appendArgument instead would be a reduction after the
+// fact, with nothing left to blame but the comma — and the error belongs on the
+// argument that overflows, the way the recursive-descent parser reports it.
+//
+// The stack here is [..., arguments, ','], so the count sits one slot down.
+func checkArgumentLimit(s *stack) error {
+	arguments, _ := s.at(1).([]ast.Expr)
+	if len(arguments) >= 255 {
+		errors.ErrorToken(s.lookahead, "Can't have more than 255 arguments.")
+	}
+	return nil
+}
+
 func appendArgument(s *stack) error {
 	argument := s.expr()
-	comma := s.token()
+	s.token() // ','
 	arguments := s.arguments()
-	if len(arguments) >= 255 {
-		errors.ErrorToken(comma, "Can't have more than 255 arguments.")
-	}
 	arguments = append(arguments, argument)
 	s.push(arguments)
 	return nil

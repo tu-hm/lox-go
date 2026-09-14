@@ -547,6 +547,10 @@ func (p *Parser) run(start string) (any, error) {
 
 		switch it.kind {
 		case itemAction:
+			// Actions see the lookahead as well as the value stack: an action
+			// that reports an error needs the token the parser has not consumed
+			// yet, not the ones it already folded.
+			p.vals.lookahead = p.peek()
 			if err := it.act(&p.vals); err != nil {
 				return nil, err
 			}
