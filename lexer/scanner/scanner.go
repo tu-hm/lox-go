@@ -228,7 +228,16 @@ func (s *ScannerImpl) number() {
 	value, err := strconv.ParseFloat(s.Source[s.start:s.current], 64)
 	if err != nil {
 		errors.Error(s.line, "Number literal is too large.")
-		return
+		// The token is added anyway. The program is refused either way, so the
+		// value is not what matters here — the shape of the stream is. Dropping
+		// the token leaves a hole where an operand belongs, and the parser then
+		// reports whatever the hole made ungrammatical instead of what the user
+		// typed. Every other recovery in this scanner keeps going without
+		// leaving one, and this one now does too.
+		//
+		// ParseFloat hands back ±Inf with ErrRange, which is the value jlox
+		// takes without complaint. Using it keeps the token honest about what
+		// the literal overflowed to.
 	}
 
 	s.addTokenWithValue(token.NUMBER, value)

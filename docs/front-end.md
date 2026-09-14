@@ -203,7 +203,7 @@ Measured, not inferred. Reproduce with `-tokens`.
 | `.5` | `DOT`, `NUMBER(5)` | Lox has no leading-dot literals |
 | `"café"` | one `STRING`, intact | string bodies are copied as bytes, so UTF-8 passes through |
 | `var café` | **2 errors**, identifier truncated to `caf` | the scanner is byte-oriented: `IsAlpha` rejects each byte of `é` |
-| a 400-digit number | error, no token | overflows `float64`; see below |
+| a 400-digit number | error, token kept as `+Inf` | overflows `float64`; see below |
 
 The last one used to be a wart worth studying. `number()` calls
 `strconv.ParseFloat`, and on failure it returned without adding a token *and
@@ -218,9 +218,23 @@ print 99999…9;        // 400 digits
 
 Nothing ever ran wrongly, because the program was refused either way. But the
 message pointed at the semicolon when the problem was the literal, which is the
-kind of error that costs an afternoon. Reporting also means `main.go`'s
-`errors.HadError` check fires *before* parsing, so the misleading second message
-is gone rather than merely outranked.
+kind of error that costs an afternoon.
+
+Reporting it is the obvious half of the fix. The other half is that `number()`
+now *keeps* the token, carrying the `+Inf` that `ParseFloat` hands back with
+`ErrRange`. Nothing will evaluate it — `HadError` is set and the program is
+refused before it runs — but the stream still has an operand where the source
+put one, so the parser has nothing extra to complain about and the misleading
+second message is gone rather than merely outranked.
+
+That is worth doing properly rather than papering over, and this repo tried the
+paper first: for a while `main.go` simply stopped between scanning and parsing
+whenever the scanner had reported anything. It suppressed the follow-on message,
+and it suppressed every *useful* one too. `foo(a | b);` is the counterexample —
+the scanner skips the `|` and leaves `foo(a b)` behind, which is a perfectly
+good token stream with a real syntax error in it, and stopping early meant never
+reporting it. The rule that covers both: a scanner error reports, and recovery
+leaves the stream parseable.
 
 Two things about that check are worth knowing:
 

@@ -9,6 +9,7 @@ package scanner_test
 import (
 	"bytes"
 	"io"
+	"math"
 	"os"
 	"reflect"
 	"strings"
@@ -366,8 +367,14 @@ func TestScanTokensNumbersWithDanglingDots(t *testing.T) {
 }
 
 // TestScanTokensNumberTooLarge: a literal that does not fit in a float64 is
-// refused, rather than quietly becoming +Inf or — as it did before — vanishing
-// from the token stream and leaving the parser to blame the next token.
+// refused, rather than quietly becoming +Inf the way jlox does.
+//
+// The token survives the refusal. It carries the +Inf ParseFloat returned and
+// nothing will ever evaluate it, because HadError is set and the program is
+// refused before it runs; it exists so the stream still has an operand where
+// the source put one. Dropping it was the earlier behaviour, and it left the
+// parser to report the hole — "Expect expression." at the following ';' —
+// on top of the message that actually named the problem.
 func TestScanTokensNumberTooLarge(t *testing.T) {
 	src := strings.Repeat("9", 400) + ";"
 
@@ -384,10 +391,13 @@ func TestScanTokensNumberTooLarge(t *testing.T) {
 		t.Errorf("stderr = %q, want it to mention \"Number literal is too large.\"", stderr)
 	}
 
-	// No NUMBER token, and scanning continues: the ';' after it is still
-	// scanned, the same way an unexpected character does not end the pass.
-	if types := typesOf(got); !reflect.DeepEqual(types, []token.TokenType{token.SEMICOLON, token.EOF}) {
-		t.Errorf("tokens = %v, want [SEMICOLON EOF]", types)
+	// The NUMBER token is kept, and scanning continues: the ';' after it is
+	// still scanned, the same way an unexpected character does not end the pass.
+	if types := typesOf(got); !reflect.DeepEqual(types, []token.TokenType{token.NUMBER, token.SEMICOLON, token.EOF}) {
+		t.Errorf("tokens = %v, want [NUMBER SEMICOLON EOF]", types)
+	}
+	if len(got) > 0 && !math.IsInf(got[0].Literal.(float64), 1) {
+		t.Errorf("literal = %v, want +Inf", got[0].Literal)
 	}
 
 	errors.Reset()
