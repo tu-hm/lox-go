@@ -208,3 +208,12 @@ property read is a hash lookup, every method access allocates a fresh
 Chapter 11's slot work removed exactly one of those costs, for locals only.
 Part III rebuilds the whole thing as a bytecode VM, and those three allocations
 are most of the reason.
+
+That rebuild starts in C rather than in Go, which this doc did not predict.
+Chapter 14's subject is manual memory management, and Go's `append` deletes it
+outright — so the two implementations now sit side by side, and the tree-walker
+above is unchanged and stays that way. See
+[Chapter 14 — chunks of bytecode](14-chunks-of-bytecode.md#why-this-one-is-in-c).
+The comparison this paragraph promises is not available until chapter 17: the
+bytecode implementation executes nothing until chapter 15, and cannot read a
+`.lox` file until chapter 16.

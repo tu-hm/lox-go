@@ -1,0 +1,11 @@
+== test chunk ==
+0000  123 OP_CONSTANT         0 '1.2'
+0002    | OP_RETURN
+
+== long constants ==
+0000    1 OP_CONSTANT         0 '1'
+0002    | OP_CONSTANT         1 '2'
+0004    2 OP_CONSTANT         2 '3'
+0006    | OP_CONSTANT_LONG  303 '4.5'
+0010    3 OP_RETURN
+-- 11 code bytes, 304 constants, 3 line runs

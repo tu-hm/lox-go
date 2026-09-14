@@ -1,2 +1,5 @@
 # Cloned test corpus and the binary tool/booktest.sh builds to run it against.
 /.booktest/
+
+# Object files and binaries for the C implementation.
+/clox/build/
