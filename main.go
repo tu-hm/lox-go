@@ -40,9 +40,11 @@ func runSource(source string, opt options, interp *interpreter.Interpreter, repl
 		}
 		return
 	}
-	if errors.HadError {
-		return // scanner already reported the malformed source
-	}
+	// A scanner error does not stop the pipeline. The scanner skips what it
+	// could not read and keeps going, so the token stream is still worth
+	// parsing: the parse errors that follow from the gap are usually the ones
+	// that point at what the user actually mistyped. Nothing runs either way —
+	// every path below refuses to execute while HadError is set.
 
 	p, err := parser.NewOf(opt.parser, tokens)
 	if err != nil {
@@ -56,7 +58,7 @@ func runSource(source string, opt options, interp *interpreter.Interpreter, repl
 	// its semicolon and prints the resulting value automatically.
 	if repl && isBareExpression(tokens) {
 		expr, err := p.Parse()
-		if err != nil {
+		if err != nil || errors.HadError {
 			return // already reported through pkg/errors
 		}
 		emitExpression(interp, expr, opt.show)
