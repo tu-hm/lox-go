@@ -102,6 +102,8 @@ func (t *table) predict(head string, la seq) (production, bool) {
 //
 // A tie means two productions match the window equally well and neither is
 // evidence over the other, so the generic message stands rather than a guess.
+//
+// When nothing resembles the window at all, vanish gets a look first.
 func (t *table) recover(head string, la seq) (production, bool) {
 	best, longest, tied := production{}, 0, false
 	for _, i := range t.g.byHead[head] {
@@ -112,10 +114,55 @@ func (t *table) recover(head string, la seq) (production, bool) {
 			tied = true
 		}
 	}
+	if longest == 0 {
+		if empty, ok := t.vanish(head); ok {
+			return empty, true
+		}
+	}
 	if longest == 0 || tied {
 		return production{}, false
 	}
 	return best, true
+}
+
+// vanish is the repair for the rules recursive descent writes as a loop rather
+// than as a choice: a rule whose every alternative but ε opens with a literal
+// token is a `while (match(...))` over there, and that loop ends on any token
+// that is none of them. This parser instead asks the table to predict the rule
+// and finds no column, so it reports the rule's own generic message — one level
+// too deep, and one level less specific than what the user needs.
+//
+// `foo(a b)` is the case. After the argument, callTail has to decide, and an
+// identifier begins neither '(' nor '.' nor anything that may follow a call, so
+// prediction misses and the message is "Expect end of expression." Recursive
+// descent is already out of its suffix loop and sitting on the ')' it wants,
+// which is why it says "Expect ')' after arguments." Deriving ε here puts this
+// parser on that same ')', with that terminal's own message.
+//
+// The terminal test is what keeps this from over-applying. A rule like
+// returnValue → expression | ε is not a loop: recursive descent guards it with
+// `if (!check(SEMICOLON))` and then commits to parsing an expression, so `return`
+// at end of input must still say "Expect expression." rather than skipping the
+// value and complaining about a missing ';'. Such a rule opens with a
+// nonterminal, so it is not one that may vanish.
+//
+// Like expanding the nearest production, this cannot accept a bad program: ε
+// consumes nothing, so every token the program was going to be rejected for is
+// still there to reject it. Nor can it loop — ε pushes no terminal or
+// nonterminal, so each use strictly shrinks the work stack.
+func (t *table) vanish(head string) (production, bool) {
+	empty, canVanish := production{}, false
+	for _, i := range t.g.byHead[head] {
+		prod := t.g.prods[i]
+		if prod.derivesEmpty() {
+			empty, canVanish = prod, true
+			continue
+		}
+		if !prod.startsWithTerminal() {
+			return production{}, false
+		}
+	}
+	return empty, canVanish
 }
 
 // fail is the message for a prediction miss. The grammar names most of them;

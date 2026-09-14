@@ -61,6 +61,36 @@ type production struct {
 	body []item
 }
 
+// derivesEmpty reports whether this production matches no input at all — an
+// empty body, or actions only. That is the ε production of its rule, and it is
+// the one production that can always be expanded without consuming a token.
+func (p production) derivesEmpty() bool {
+	for _, i := range p.body {
+		if i.kind != itemAction {
+			return false
+		}
+	}
+	return true
+}
+
+// startsWithTerminal reports whether the body opens with a terminal rather than
+// a nonterminal, actions aside. It is how a rule says which shape it has in the
+// recursive-descent parser: a production introduced by a literal token is one
+// that parser reaches by match()ing that token.
+func (p production) startsWithTerminal() bool {
+	for _, i := range p.body {
+		switch i.kind {
+		case itemAction:
+			continue
+		case itemTerminal:
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
 // String renders a production the way docs/grammar.md writes it. Actions are
 // left out: they are implementation, not language.
 func (p production) String() string {
@@ -319,6 +349,9 @@ func loxGrammar() *grammar {
 	for _, name := range []string{nExpression, nAssignment, nOr, nAnd, "equality", "comparison", "term", "factor", "unary", nCall, "primary"} {
 		g.fail[name] = expectExpr
 	}
+	// A fallback only: callTail is terminal-led with an ε production, so a
+	// prediction miss is repaired by table.vanish and reported by whatever
+	// encloses the call. Kept for the case vanish declines to handle, a tie.
 	g.fail[nCallTail] = expectEnd
 	// Both optional rules can only fail to predict when the thing they are
 	// optional *within* is unfinished, so each borrows that statement's message
@@ -376,6 +409,12 @@ func levelWith(g *grammar, name, next string, fold action, ops ...token.TokenTyp
 	// operators nor anything that may follow the expression — "1 2" is the
 	// short example. That is the LL(k) parser noticing, one token earlier than
 	// recursive descent does, that the expression is already over.
+	//
+	// Which is why it does not report here: noticing earlier is not a licence to
+	// describe the mistake less well. A tail is terminal-led and nullable, so
+	// table.vanish ends it the way recursive descent ends its loop, and the
+	// enclosing rule — the ';' of an expression statement, the ')' of a call —
+	// reports. This message survives as the fallback for a tie.
 	g.fail[tail] = expectEnd
 }
 
