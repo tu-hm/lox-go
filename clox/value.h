@@ -1,6 +1,8 @@
 #ifndef clox_value_h
 #define clox_value_h
 
+#include <stdio.h>
+
 #include "common.h"
 
 // Value is a bare double for now, and that is the whole point of a constant
@@ -24,6 +26,9 @@ typedef struct {
 void initValueArray(ValueArray* array);
 void writeValueArray(ValueArray* array, Value value);
 void freeValueArray(ValueArray* array);
+// fprintValue is the primitive; printValue is it aimed at stdout. The split
+// exists because the disassembler now serves two masters -- see debug.h.
+void fprintValue(FILE* out, Value value);
 void printValue(Value value);
 
 #endif

@@ -280,3 +280,9 @@ which is the first time its offset arithmetic has to agree with a *running*
 instruction pointer instead of a loop variable. And `Value` being a bare
 `double` stops being free the moment the stack needs to hold anything a
 comparison could fail on.
+
+> It has since landed — see
+> [chapter 15](15-a-virtual-machine.md#scope-boundary) for which of those two
+> predictions held. The short version: the disassembler one did, and `Value`
+> survived untouched, because a stack that can only hold doubles has nothing to
+> compare wrongly. That waits for chapter 18.
