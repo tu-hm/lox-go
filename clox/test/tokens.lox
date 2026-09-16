@@ -1,0 +1,41 @@
+// Every token type the scanner can produce, once, plus the inputs most likely to
+// be lexed wrong. Its dump is pinned in clox/test/expected-tokens.txt.
+
+( ) { } , . - + ; / *
+! != = == > >= < <=
+
+and class else false for fun if nil or print return super this true var while
+
+// Keyword prefixes and extensions. `orchid` is the one that breaks a scanner
+// that matches keywords against the input instead of scanning a maximal run
+// first: it lexes as `or` followed by `chid`.
+orchid format further andy classy printer
+a c e f i n o p r s t v w fa fo fu th tr
+
+foo _bar baz123 A_1 _
+
+0 123 123.456
+
+// A dot with no digit after it is not part of the number, which is what makes
+// `123.sqrt()` parse. A dot with no digit before it is not part of one either.
+123.sqrt
+.5
+
+"" "hello" "a b c" "keywords like and or if are text in here"
+
+"line one
+line two"
+
+// Challenge 1. The first is the book's own example; the second is its nesting
+// question; the third has an ordinary block inside the interpolation, which is
+// the case the brace counter exists for.
+"${drink} will be ready in ${steep + cool} minutes."
+"Nested ${"interpolation?! Are you ${"mad?!"}"}"
+"${ {} }"
+
+// An error is a token and scanning continues past it, so the identifier after
+// these two is still found.
+@ # keepgoing
+
+// A comment is whitespace, so this line produces nothing at all.
+"unterminated

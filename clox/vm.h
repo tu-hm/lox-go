@@ -42,8 +42,15 @@ typedef enum {
 void initVM(void);
 void freeVM(void);
 
-// interpret runs a chunk from its first byte with an empty stack.
-InterpretResult interpret(Chunk* chunk);
+// interpret compiles source text and runs the result. As of chapter 16 the
+// compiler emits no bytecode -- it prints the token stream and returns -- so
+// this always reports INTERPRET_OK.
+InterpretResult interpret(const char* source);
+
+// interpretChunk runs a chunk from its first byte with an empty stack. This was
+// chapter 15's `interpret`, and it stays exported because bytecode still has to
+// be written by hand to be run at all. Chapter 17 makes it interpret's back end.
+InterpretResult interpretChunk(Chunk* chunk);
 
 void push(Value value);
 Value pop(void);

@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 #include "common.h"
+#include "compiler.h"
 #include "debug.h"
 #include "memory.h"
 #include "vm.h"
@@ -172,7 +173,7 @@ static InterpretResult run(void) {
 #undef READ_BYTE
 }
 
-InterpretResult interpret(Chunk* chunk) {
+InterpretResult interpretChunk(Chunk* chunk) {
   vm.chunk = chunk;
   vm.ip = vm.chunk->code;
 
@@ -183,4 +184,13 @@ InterpretResult interpret(Chunk* chunk) {
   resetStack();
 
   return run();
+}
+
+InterpretResult interpret(const char* source) {
+  // One chapter of placeholder. The scanner has a consumer now, and that is the
+  // whole of chapter 16: compile() dumps tokens and produces no chunk, so there
+  // is nothing for the dispatch loop above to run. Chapter 17 replaces this body
+  // with compile-into-a-chunk and a call to interpretChunk.
+  compile(source);
+  return INTERPRET_OK;
 }

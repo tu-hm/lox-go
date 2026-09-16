@@ -29,7 +29,7 @@ static const int REPS = 5;
 static double timeChunk(Chunk* chunk, int runs) {
   clock_t start = clock();
   for (int i = 0; i < runs; i++) {
-    interpret(chunk);
+    interpretChunk(chunk);
   }
   return (double)(clock() - start) / CLOCKS_PER_SEC;
 }

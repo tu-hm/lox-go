@@ -1,137 +1,104 @@
 #include <stdio.h>
+#include <stdlib.h>
 
-#include "chunk.h"
 #include "common.h"
-#include "debug.h"
+#include "memory.h"
 #include "vm.h"
 
 #ifdef CLOX_OWN_HEAP
 #include "heap.h"
 #endif
 
-// bookChunk is the chapter 14 demo, byte for byte. Its disassembly is the three
-// lines printed at the end of section 14.6; the value under it is chapter 15
-// running the same bytes.
-static void bookChunk(void) {
-  Chunk chunk;
-  initChunk(&chunk);
+// repl reads a line and interprets it, which for this chapter means printing its
+// tokens. The 1024-byte limit is the book's and is a real limitation rather than
+// a simplification: a longer line is silently split, and the halves scan as two
+// separate programs. Fixing it needs a growable line buffer and changes nothing
+// about the interpreter, which is why the book leaves it.
+static void repl(void) {
+  char line[1024];
+  for (;;) {
+    printf("> ");
 
-  writeConstant(&chunk, 1.2, 123);
-  writeChunk(&chunk, OP_RETURN, 123);
+    if (!fgets(line, sizeof(line), stdin)) {
+      printf("\n");
+      break;
+    }
 
-  disassembleChunk(stdout, &chunk, "test chunk");
-  interpret(&chunk);
-  freeChunk(&chunk);
+    interpret(line);
+  }
 }
 
-// constantChunk exercises what the book's demo cannot: three bytes on one line
-// leave chapter 14's two challenges invisible. Running it also puts
-// OP_CONSTANT_LONG through the dispatch loop, which is the first decoder of that
-// operand other than the disassembler.
-static void constantChunk(void) {
-  Chunk chunk;
-  initChunk(&chunk);
-
-  writeConstant(&chunk, 1.0, 1);
-  writeConstant(&chunk, 2.0, 1); // same line as the one above: prints as |
-  writeConstant(&chunk, 3.0, 2);
-
-  // Fill the pool past the one-byte operand limit without emitting any code,
-  // so the constant written next is forced into the long form.
-  for (int i = 0; i < 300; i++) {
-    addConstant(&chunk, (Value)i);
+// readFile slurps the whole file. It goes through reallocate rather than malloc
+// -- a divergence from the book, and the point of the invariant memory.h states:
+// reallocate is the only function in clox that allocates. Keeping the source
+// buffer inside it is what lets `make test HEAP=own` still check at exit that
+// nothing is live, and it is what chapter 26's byte counter will already be
+// seeing without a special case.
+static char* readFile(const char* path, size_t* length) {
+  FILE* file = fopen(path, "rb");
+  if (file == NULL) {
+    fprintf(stderr, "Could not open file \"%s\".\n", path);
+    exit(74);
   }
 
-  writeConstant(&chunk, 4.5, 2);
-  writeChunk(&chunk, OP_RETURN, 3);
+  fseek(file, 0L, SEEK_END);
+  size_t fileSize = ftell(file);
+  rewind(file);
 
-  disassembleChunk(stdout, &chunk, "long constants");
+  char* buffer = (char*)reallocate(NULL, 0, fileSize + 1);
+  if (buffer == NULL) {
+    fprintf(stderr, "Not enough memory to read \"%s\".\n", path);
+    exit(74);
+  }
 
-  // The point of challenge 1, as a number. Eleven code bytes drawn from three
-  // source lines cost three runs, not eleven ints.
-  printf("-- %d code bytes, %d constants, %d line runs\n",
-         chunk.count, chunk.constants.count, chunk.lines.count);
+  size_t bytesRead = fread(buffer, sizeof(char), fileSize, file);
+  if (bytesRead < fileSize) {
+    fprintf(stderr, "Could not read file \"%s\".\n", path);
+    exit(74);
+  }
+  buffer[bytesRead] = '\0';
 
-  // OP_RETURN pops one value and prints it; 1, 2 and 3 are still on the stack
-  // when this returns. Nothing minds, and interpret() resets before the next.
-  interpret(&chunk);
-  freeChunk(&chunk);
+  fclose(file);
+  *length = fileSize;
+  return buffer;
 }
 
-// arithmeticChunk is section 15.3's worked example, -((1.2 + 3.4) / 5.6), hand
-// assembled. Chapter 17 is where a compiler produces these bytes from the text.
-static void arithmeticChunk(void) {
-  Chunk chunk;
-  initChunk(&chunk);
+static void runFile(const char* path) {
+  size_t length;
+  char* source = readFile(path, &length);
+  InterpretResult result = interpret(source);
 
-  writeConstant(&chunk, 1.2, 1);
-  writeConstant(&chunk, 3.4, 1);
-  writeChunk(&chunk, OP_ADD, 1);
-  writeConstant(&chunk, 5.6, 1);
-  writeChunk(&chunk, OP_DIVIDE, 1);
-  writeChunk(&chunk, OP_NEGATE, 1);
-  writeChunk(&chunk, OP_RETURN, 1);
+  // The source is freed only after interpret returns, and that is load bearing:
+  // every Token points into this buffer rather than owning a copy of its text.
+  FREE_ARRAY(char, source, length + 1);
 
-  disassembleChunk(stdout, &chunk, "arithmetic");
-  interpret(&chunk);
-  freeChunk(&chunk);
-}
-
-// deepChunk is challenge 3: push more values than the book's fixed stack holds.
-// Under the book's VM this is undefined behaviour with no diagnostic. Here the
-// stack reallocates, and the number printed at the end is the proof.
-static void deepChunk(void) {
-  Chunk chunk;
-  initChunk(&chunk);
-
-  const int n = 300;
-  for (int i = 1; i <= n; i++) {
-    writeConstant(&chunk, (Value)i, 1);
-  }
-  for (int i = 1; i < n; i++) {
-    writeChunk(&chunk, OP_ADD, 2);
-  }
-  writeChunk(&chunk, OP_RETURN, 3);
-
-  // Neither disassembled nor traced. 988 code bytes is a page of output on its
-  // own, and the trace would be far worse: it prints the whole stack before
-  // every instruction, so tracing n pushes costs O(n^2) lines of text.
-  vmSetTrace(NULL);
-
-  printf("== deep stack ==\n");
-  interpret(&chunk);
-  printf("-- %d code bytes, stack grew to %d slots\n",
-         chunk.count, vmStackCapacity());
-
-  freeChunk(&chunk);
+  // 65 and 70 are the sysexits.h conventions the book uses and the numbers
+  // tool/booktest.py already expects from the Go binary. Nothing can produce
+  // either of them yet -- the compiler reports no errors and the VM runs no
+  // bytecode -- but the plumbing is what chapter 17 fills in.
+  if (result == INTERPRET_COMPILE_ERROR) exit(65);
+  if (result == INTERPRET_RUNTIME_ERROR) exit(70);
 }
 
 int main(int argc, const char* argv[]) {
   initVM();
 
-  // The trace goes to stderr so that stdout stays byte for byte identical across
-  // every build configuration -- which is what `make test HEAP=own` and
-  // `make test MODE=release` exist to check. Without DEBUG_TRACE_EXECUTION
-  // compiled in, this call records the stream and nothing ever reads it.
-  vmSetTrace(stderr);
-
-  bookChunk();
-  printf("\n");
-  constantChunk();
-  printf("\n");
-  arithmeticChunk();
-  printf("\n");
-  deepChunk();
+  if (argc == 1) {
+    repl();
+  } else if (argc == 2) {
+    runFile(argv[1]);
+  } else {
+    fprintf(stderr, "Usage: clox [path]\n");
+    exit(64);
+  }
 
   freeVM();
 
 #ifdef CLOX_OWN_HEAP
-  // Owning the allocator makes a leak check exact rather than heuristic: every
-  // chunk was freed and so was the stack, so nothing may still be live.
-  // LeakSanitizer would be the usual way to ask, and it is unavailable on macOS.
-  //
-  // This writes to stderr, never stdout, so the golden output stays byte for
-  // byte the same as the libc build's.
+  // Nothing may still be live at exit: the source buffer was freed, and so was
+  // the VM's stack. LeakSanitizer would be the usual way to ask, and it is
+  // unavailable on macOS. This writes to stderr so stdout stays byte for byte
+  // identical to the libc build's.
   HeapStats stats = heapStats();
   if (stats.allocatedBlocks != 0 || !heapCheck()) {
     fprintf(stderr, "clox: %d block(s) still live at exit\n",

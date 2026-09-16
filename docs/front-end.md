@@ -170,13 +170,51 @@ character costs one message, not the rest of the file:
 ```
 
 Reporting happens through the package-global `errors.HadError` in
-[`pkg/errors`](../pkg/errors/errors.go). `main.go` checks that flag *after*
-lexing and refuses to parse when it is set. So the contract is: the scanner
-always returns a token slice, always EOF-terminated, and separately raises a
-flag saying whether that slice is trustworthy.
+[`pkg/errors`](../pkg/errors/errors.go). `main.go` does *not* stop at that flag
+after lexing — it parses anyway ([`main.go`](../main.go), `runSource`), because
+the parse errors that follow from the gap usually point at what was actually
+mistyped. What the flag stops is execution: every path below the parser refuses
+to run while it is set. So the contract is: the scanner always returns a token
+slice, always EOF-terminated, and separately raises a flag saying whether that
+slice is trustworthy.
+
+```
+foo(a | b);  →  [line 3] Error: Unexpected character.
+                [line 3] Error at 'b': Expect ')' after arguments.
+```
+
+Two messages for one typo, and the second is the useful one. That is
+[`test/unexpected_character.lox`](../test/unexpected_character.lox), and it is
+what the early return used to break.
 
 That global is the ugliest thing in the front end, and it is the book's design.
 It is why scanner and parser tests cannot use `t.Parallel()`.
+
+### The other scanner does it the other way
+
+[`clox/scanner.c`](../clox/scanner.c), the C implementation's scanner from
+[chapter 16](16-scanning-on-demand.md), reaches the opposite answer from the same
+book. It has no globals and no separate reporting channel: a bad character comes
+back as a `TOKEN_ERROR` whose text is the message, in the stream, in position.
+
+The difference is who can forget. Here the token slice and the trustworthiness
+flag are two values, so a caller that reads one and not the other compiles and
+runs and is wrong — which is exactly the bug commit `0bb2ad8` was fixing, in the
+other direction. There, the error *is* a token, so the only way to ignore it is
+to ignore a token.
+
+What the global buys is that a scanner error and a parser error are reported by
+the same machinery and come out looking the same. clox pays for its version in
+chapter 17, where the compiler has to special-case `TOKEN_ERROR` in `advance`
+because its `start` pointer does not point into the source and no source span can
+be computed from it.
+
+One more difference, smaller and more consequential: a `token.Token` here carries
+a `Lexeme string` and a `Literal any`, so `123` has already been through
+`ParseFloat` by the time the parser sees it — which is how the overflow message
+in [Known edges](#known-edges) is possible at all. A clox `Token` is a pointer and
+a length into the source buffer. It costs no allocation, and it cannot report
+anything about a number, because it has not looked.
 
 ## What the scanner refuses to know
 
