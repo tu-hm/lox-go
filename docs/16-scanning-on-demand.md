@@ -369,3 +369,12 @@ first real consumer in `advance`, and the special case in `errorAt` is where the
 cost of putting errors in the stream is paid. And `strtod` arrives, which is the
 first time a clox token means a value rather than a span — and the first time the
 two implementations could be compared on something other than token types.
+
+> It has since landed — see
+> [chapter 17](17-compiling-expressions.md#scope-boundary) for the detail. All
+> four predictions held. The token dump moved behind a flag rather than into a
+> test binary, because [`tool/scandiff.sh`](../tool/scandiff.sh) needs it in the
+> shipped binary; the `errorAt` special case is one branch with a comment for a
+> body; and `strtod` did make the two implementations comparable, through
+> [`tool/rpndiff.sh`](../tool/rpndiff.sh), which checks the emitted bytecode
+> against the Go AST printer's reverse-Polish rendering of the same expression.

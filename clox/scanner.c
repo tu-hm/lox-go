@@ -272,6 +272,8 @@ Token scanToken(void) {
     case '+': return makeToken(TOKEN_PLUS);
     case '/': return makeToken(TOKEN_SLASH);
     case '*': return makeToken(TOKEN_STAR);
+    case '?': return makeToken(TOKEN_QUESTION);
+    case ':': return makeToken(TOKEN_COLON);
     case '!':
       return makeToken(match('=') ? TOKEN_BANG_EQUAL : TOKEN_BANG);
     case '=':
@@ -299,6 +301,8 @@ const char* tokenTypeName(TokenType type) {
     case TOKEN_SEMICOLON:     return "SEMICOLON";
     case TOKEN_SLASH:         return "SLASH";
     case TOKEN_STAR:          return "STAR";
+    case TOKEN_QUESTION:      return "QUESTION";
+    case TOKEN_COLON:         return "COLON";
     case TOKEN_BANG:          return "BANG";
     case TOKEN_BANG_EQUAL:    return "BANG_EQUAL";
     case TOKEN_EQUAL:         return "EQUAL";

@@ -8,6 +8,12 @@ typedef enum {
   TOKEN_COMMA, TOKEN_DOT, TOKEN_MINUS, TOKEN_PLUS,
   TOKEN_SEMICOLON, TOKEN_SLASH, TOKEN_STAR,
 
+  // Challenge 3 of chapter 17. Lox has no ternary, and neither scanner had a
+  // token for either half of one until the compiler needed somewhere to hang
+  // the mixfix parse rule. The Go scanner still has neither, which is the one
+  // place the two token vocabularies differ -- see tool/scandiff.sh.
+  TOKEN_QUESTION, TOKEN_COLON,
+
   // One or two character tokens.
   TOKEN_BANG, TOKEN_BANG_EQUAL,
   TOKEN_EQUAL, TOKEN_EQUAL_EQUAL,

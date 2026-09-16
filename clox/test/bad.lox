@@ -1,0 +1,7 @@
+// A file that does not compile, so `make test` can check the exit code. 65 is
+// EX_DATAERR from sysexits.h, which is what the book uses and what
+// tool/booktest.py already expects from the Go binary.
+//
+// Until this chapter nothing could produce it: chapter 16 wired the code through
+// runFile with no compiler behind it to report anything.
+1 +

@@ -17,6 +17,14 @@
 # `orchid`, a two-character operator that grabs one character too many or too
 # few, a comment that eats a newline, a number that swallows a trailing dot.
 #
+# One thing they no longer agree on at all: chapter 17's challenge 3 gave the C
+# scanner TOKEN_QUESTION and TOKEN_COLON, and the Go one still reports both as
+# unexpected characters. No file in the corpus contains a `?`, and the only `:`
+# outside a comment is inside a string literal in test/benchmark, which this
+# script does not walk -- so the two vocabularies differing costs nothing here.
+# A corpus that grew a ternary would show up as a skip, not as a false failure:
+# the Go side would write to stderr and the file would be dropped below.
+#
 # Usage:
 #   tool/scandiff.sh                # the whole corpus
 #   tool/scandiff.sh scanning       # only test/scanning/**
@@ -55,7 +63,7 @@ declare -a skips=()
 while IFS= read -r file; do
 	[[ -n "$filter" && "$file" != test/"$filter"* ]] && continue
 
-	"$clox" "$file" > "$work/c.txt"
+	"$clox" -tokens "$file" > "$work/c.txt"
 
 	# An error token has no counterpart on the Go side, which reports to stderr
 	# and emits nothing. A lexeme with escaped whitespace in it is a multi-line

@@ -337,6 +337,36 @@ $ go run . -print=ast   # print 1 + 2 * 3;
 Nothing compares precedence numbers at run time. The answer was decided by which
 function calls which.
 
+### The other parser compares a number
+
+That sentence is exactly what
+[clox's compiler](../clox/compiler.c) does not do. Chapter 17 of the book parses
+the same grammar with a Pratt parser: one table with a row per token type, each
+row holding a binding power, and one comparison.
+
+```c
+while (precedence <= getRule(parser.current.type)->precedence) {
+```
+
+The ladder above is eleven functions, and parsing the expression `1` enters all
+of them — `expression` down to `primary` — to discover that none of the ten
+operators is there. `parsePrecedence` reaches the same conclusion with one table
+lookup and one `<=`.
+
+The trade is not speed, which nobody here is measuring. It is where a new
+operator goes. Adding one to the ladder means deciding which rung it belongs on
+and editing the two functions either side of it, because each rung names the next
+one; adding one to the table is a row. That is also its weakness: the ladder is
+readable top to bottom as a grammar, and the table is not readable as anything
+until you already know the algorithm.
+
+There is a third encoding of the same ladder in this repository — the LL(k)
+grammar's one-nonterminal-per-level rungs, built by a loop over
+`level(g, "term", "factor", token.MINUS, token.PLUS)` and friends. See
+[the LL(k) parser](llk-parser.md) and
+[chapter 17's notes](17-compiling-expressions.md#precedence-as-data), which puts
+all three side by side.
+
 ## Associativity: loop or recurse
 
 Same rung, two operators — `1 - 2 - 3`. Which grouping you get depends on

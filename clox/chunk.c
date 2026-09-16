@@ -1,6 +1,3 @@
-#include <stdio.h>
-#include <stdlib.h>
-
 #include "chunk.h"
 #include "memory.h"
 
@@ -40,13 +37,19 @@ int addConstant(Chunk* chunk, Value value) {
   return chunk->constants.count - 1;
 }
 
-void writeConstant(Chunk* chunk, Value value, int line) {
+bool writeConstant(Chunk* chunk, Value value, int line) {
+  // The bound is checked before the value is interned, not after. Adding it
+  // first and then refusing to emit would leave a constant in the pool that no
+  // instruction refers to, and the compiler's answer to a full pool is to
+  // report and keep parsing -- so that garbage would accumulate.
+  if (chunk->constants.count > 0xffffff) return false;
+
   int constant = addConstant(chunk, value);
 
   if (constant < 256) {
     writeChunk(chunk, OP_CONSTANT, line);
     writeChunk(chunk, (uint8_t)constant, line);
-    return;
+    return true;
   }
 
   // Three bytes, least significant first. Little-endian is not the obvious
@@ -54,18 +57,11 @@ void writeConstant(Chunk* chunk, Value value, int line) {
   // the host on every machine clox is likely to run on, so chapter 15's
   // dispatch loop can eventually read the operand with one unaligned load
   // rather than three shifts.
-  if (constant > 0xffffff) {
-    // Unreachable in practice at 16.7 million constants in one chunk, and there
-    // is nowhere to report it to: chapter 14 has no compiler and no source
-    // location. Chapter 17 gets both, and this becomes a compile error.
-    fprintf(stderr, "clox: too many constants in one chunk\n");
-    exit(1);
-  }
-
   writeChunk(chunk, OP_CONSTANT_LONG, line);
   writeChunk(chunk, (uint8_t)(constant & 0xff), line);
   writeChunk(chunk, (uint8_t)((constant >> 8) & 0xff), line);
   writeChunk(chunk, (uint8_t)((constant >> 16) & 0xff), line);
+  return true;
 }
 
 int getLine(const Chunk* chunk, int offset) {

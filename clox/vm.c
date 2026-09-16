@@ -187,10 +187,23 @@ InterpretResult interpretChunk(Chunk* chunk) {
 }
 
 InterpretResult interpret(const char* source) {
-  // One chapter of placeholder. The scanner has a consumer now, and that is the
-  // whole of chapter 16: compile() dumps tokens and produces no chunk, so there
-  // is nothing for the dispatch loop above to run. Chapter 17 replaces this body
-  // with compile-into-a-chunk and a call to interpretChunk.
-  compile(source);
-  return INTERPRET_OK;
+  Chunk chunk;
+  initChunk(&chunk);
+
+  if (!compile(source, &chunk)) {
+    freeChunk(&chunk);
+    return INTERPRET_COMPILE_ERROR;
+  }
+
+  InterpretResult result = interpretChunk(&chunk);
+
+  // The chunk is a local, so the VM's chunk and ip are dangling the moment this
+  // returns. Nothing reads them between runs today -- run() sets ip from chunk
+  // on entry -- but a stale pointer that is never nulled is how the next chapter
+  // finds out the hard way.
+  freeChunk(&chunk);
+  vm.chunk = NULL;
+  vm.ip = NULL;
+
+  return result;
 }

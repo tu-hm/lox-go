@@ -1,7 +1,7 @@
 // Every token type the scanner can produce, once, plus the inputs most likely to
 // be lexed wrong. Its dump is pinned in clox/test/expected-tokens.txt.
 
-( ) { } , . - + ; / *
+( ) { } , . - + ; / * ? :
 ! != = == > >= < <=
 
 and class else false for fun if nil or print return super this true var while

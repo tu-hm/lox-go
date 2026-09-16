@@ -1,0 +1,24 @@
+-- <empty>
+[line 1] Error at end: Expect expression.
+-- 1 +
+[line 1] Error at end: Expect expression.
+-- (1
+[line 1] Error at end: Expect ')' after expression.
+-- 1 2
+[line 1] Error at '2': Expect end of expression.
+-- )
+[line 1] Error at ')': Expect expression.
+-- 1 + + 2
+[line 1] Error at '+': Expect expression.
+-- @
+[line 1] Error: Unexpected character.
+-- "unterminated
+[line 1] Error: Unterminated string.
+-- true
+[line 1] Error at 'true': Expect expression.
+-- "abc"
+[line 1] Error at '"abc"': Expect expression.
+-- 1 ? 2 * 3 : 4
+[line 1] Error at '?': The '?:' operator parses but cannot be compiled yet.
+-- 1 ? 2
+[line 1] Error at end: Expect ':' after then branch of conditional.

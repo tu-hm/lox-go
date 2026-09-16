@@ -19,4 +19,16 @@
 #define DEBUG_TRACE_EXECUTION
 #endif
 
+// DEBUG_PRINT_CODE compiles in the compiler's dump of what it just emitted: the
+// finished chunk, disassembled, the moment the last byte is written.
+//
+// It follows DEBUG_TRACE_EXECUTION in both respects. It is tied to the
+// Makefile's debug build rather than commented in and out by hand, and
+// compiling it in is not the same as turning it on -- see compilerSetTrace.
+// The dump goes to a stream the caller picks, and never to stdout, because
+// stdout is the program's output and has to be identical in every build.
+#ifdef DEBUG
+#define DEBUG_PRINT_CODE
+#endif
+
 #endif

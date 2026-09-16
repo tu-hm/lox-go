@@ -1,0 +1,54 @@
+# Expressions for tool/rpndiff.sh. One per line; # starts a comment.
+#
+# Everything here has to be an expression both front ends can handle, which for
+# clox means chapter 17's subset: numbers, the four arithmetic operators, unary
+# minus and parentheses. No literals other than numbers, no names, no calls.
+#
+# Number literals stay under seven significant digits. The C disassembler prints
+# constants with %g, which rounds there, and the Go printer does not -- so
+# 1.2345678 would come out `1.23457` on one side and `1.2345678` on the other and
+# the mismatch would be about printf, not about parsing.
+
+# Precedence.
+1
+1 + 2
+1 + 2 * 3
+2 * 3 + 4 * 5
+1 + 2 * 3 - 4 / 5
+2 + 3 * 4 - 5 * 6 + 7
+
+# Grouping, including the parentheses that change nothing.
+(1 + 2) * 3
+((((1))))
+2 * (3 + 4) * 5
+(1 + 2) * (3 + 4)
+(1 + 2) / (3 - 4)
+
+# Associativity. Every one of these has a different value if the right operand
+# of a binary operator is parsed at the operator's own precedence instead of one
+# tighter.
+1 - 2 - 3
+1 - 2 - 3 - 4
+100 / 5 / 2
+8 / 4 * 2
+1 + 2 - 3 + 4
+64 / 8 / 4 / 2
+
+# Unary, which binds tighter than all of it and stacks.
+-1
+-1 + 2
+-(1 + 2)
+- - - 3
+-1 * -1
+1 - -2 - -3
+-1 - -2 * -3
+
+# The two expressions the book uses in this chapter and the last one.
+(-1 + 2) * 3 - -4
+(5 - (3 - 1)) + -1
+
+# Decimals, inside what %g prints exactly.
+1.5 * 2
+3.25 - 0.25
+0.5 + 0.25 * 4
+-1.5 * (2.5 + 1)

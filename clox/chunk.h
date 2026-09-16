@@ -39,7 +39,12 @@ int addConstant(Chunk* chunk, Value value);
 // writeConstant is challenge 2: add a constant and emit the instruction that
 // loads it, choosing the operand width. Prefer it over addConstant plus a
 // hand-written OP_CONSTANT, which silently truncates past index 255.
-void writeConstant(Chunk* chunk, Value value, int line);
+//
+// It returns false, having written nothing, when the pool is full at 2^24
+// entries. Chapter 14 had nowhere to report that to and called exit(1); chapter
+// 17 has a compiler with a source location, so the failure comes back here and
+// becomes an ordinary compile error.
+bool writeConstant(Chunk* chunk, Value value, int line);
 
 // getLine is the line a byte of code was compiled from. See LineArray.
 int getLine(const Chunk* chunk, int offset);

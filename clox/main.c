@@ -1,7 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
+#include "chunk.h"
 #include "common.h"
+#include "compiler.h"
+#include "debug.h"
 #include "memory.h"
 #include "vm.h"
 
@@ -9,11 +13,58 @@
 #include "heap.h"
 #endif
 
-// repl reads a line and interprets it, which for this chapter means printing its
-// tokens. The 1024-byte limit is the book's and is a real limitation rather than
-// a simplification: a longer line is silently split, and the halves scan as two
-// separate programs. Fixing it needs a growable line buffer and changes nothing
-// about the interpreter, which is why the book leaves it.
+// What to do with the source, once it has been read.
+typedef enum {
+  MODE_RUN,     // compile and execute -- the default
+  MODE_TOKENS,  // scan only, and print the tokens
+  MODE_DUMP,    // compile only, and print the bytecode
+} Mode;
+
+static Mode mode = MODE_RUN;
+
+// run is the one place that decides what a chunk of source means, so the REPL
+// and the file runner cannot drift apart. It returns the exit code the mode
+// implies, which for everything but MODE_RUN is only ever 0 or 65.
+static int run(const char* source) {
+  switch (mode) {
+    case MODE_TOKENS:
+      dumpTokens(source);
+      return 0;
+
+    case MODE_DUMP: {
+      // The disassembly is this mode's output, so it goes to stdout -- unlike
+      // the one endCompiler writes, which is diagnostics and goes to stderr.
+      // Same function, two streams; see debug.h.
+      Chunk chunk;
+      initChunk(&chunk);
+      bool ok = compile(source, &chunk);
+      if (ok) disassembleChunk(stdout, &chunk, "code");
+      freeChunk(&chunk);
+      return ok ? 0 : 65;
+    }
+
+    case MODE_RUN:
+    default: {
+      // 65 and 70 are the sysexits.h conventions the book uses and the numbers
+      // tool/booktest.py already expects from the Go binary. Chapter 16 plumbed
+      // them through with nothing behind them; the compiler is what makes 65
+      // reachable.
+      InterpretResult result = interpret(source);
+      if (result == INTERPRET_COMPILE_ERROR) return 65;
+      if (result == INTERPRET_RUNTIME_ERROR) return 70;
+      return 0;
+    }
+  }
+}
+
+// repl reads a line and runs it. The 1024-byte limit is the book's and is a real
+// limitation rather than a simplification: a longer line is silently split, and
+// the halves compile as two separate programs. Fixing it needs a growable line
+// buffer and changes nothing about the interpreter, which is why the book leaves
+// it.
+//
+// An error does not end the session, which is the difference between this and
+// runFile: the exit code is thrown away and the next line gets a fresh parser.
 static void repl(void) {
   char line[1024];
   for (;;) {
@@ -24,7 +75,7 @@ static void repl(void) {
       break;
     }
 
-    interpret(line);
+    run(line);
   }
 }
 
@@ -63,33 +114,62 @@ static char* readFile(const char* path, size_t* length) {
   return buffer;
 }
 
-static void runFile(const char* path) {
+static int runFile(const char* path) {
   size_t length;
   char* source = readFile(path, &length);
-  InterpretResult result = interpret(source);
+  int status = run(source);
 
-  // The source is freed only after interpret returns, and that is load bearing:
-  // every Token points into this buffer rather than owning a copy of its text.
+  // The source is freed only after run returns, and that is load bearing: every
+  // Token points into this buffer rather than owning a copy of its text, and the
+  // compiler reads those pointers.
   FREE_ARRAY(char, source, length + 1);
-
-  // 65 and 70 are the sysexits.h conventions the book uses and the numbers
-  // tool/booktest.py already expects from the Go binary. Nothing can produce
-  // either of them yet -- the compiler reports no errors and the VM runs no
-  // bytecode -- but the plumbing is what chapter 17 fills in.
-  if (result == INTERPRET_COMPILE_ERROR) exit(65);
-  if (result == INTERPRET_RUNTIME_ERROR) exit(70);
+  return status;
 }
 
+static void usage(void) {
+  fprintf(stderr, "Usage: clox [-tokens|-dump] [-trace] [path]\n");
+  exit(64);
+}
+
+// The flags mirror glox's (see main.go), because the two binaries are compared
+// by tools that have to drive both: tool/scandiff.sh reads -tokens from each,
+// and tool/rpndiff.sh reads -dump here against -print=rpn there.
 int main(int argc, const char* argv[]) {
+  bool trace = false;
+
+  int i = 1;
+  for (; i < argc && argv[i][0] == '-' && argv[i][1] != '\0'; i++) {
+    if (strcmp(argv[i], "-tokens") == 0) {
+      mode = MODE_TOKENS;
+    } else if (strcmp(argv[i], "-dump") == 0) {
+      mode = MODE_DUMP;
+    } else if (strcmp(argv[i], "-trace") == 0) {
+      trace = true;
+    } else {
+      usage();
+    }
+  }
+
+  if (argc - i > 1) usage();
+
   initVM();
 
-  if (argc == 1) {
-    repl();
-  } else if (argc == 2) {
-    runFile(argv[1]);
+  // After initVM, not before: initVM sets vm.trace to NULL, so calling
+  // vmSetTrace while parsing the flags above would be undone by it.
+  //
+  // Both traces go to stderr, so stdout stays exactly what it would have been.
+  // In a release build DEBUG_TRACE_EXECUTION and DEBUG_PRINT_CODE are not
+  // compiled in and this sets two variables nothing reads.
+  if (trace) {
+    vmSetTrace(stderr);
+    compilerSetTrace(stderr);
+  }
+
+  int status = 0;
+  if (i < argc) {
+    status = runFile(argv[i]);
   } else {
-    fprintf(stderr, "Usage: clox [path]\n");
-    exit(64);
+    repl();
   }
 
   freeVM();
@@ -106,5 +186,5 @@ int main(int argc, const char* argv[]) {
     return 1;
   }
 #endif
-  return 0;
+  return status;
 }

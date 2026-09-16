@@ -9,6 +9,8 @@
    | SEMICOLON      ';'
    | SLASH          '/'
    | STAR           '*'
+   | QUESTION       '?'
+   | COLON          ':'
    5 BANG           '!'
    | BANG_EQUAL     '!='
    | EQUAL          '='
